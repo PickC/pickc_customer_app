@@ -34,57 +34,102 @@ class AuthNotifier extends AsyncNotifier<CustomerModel?> {
   }
 
   Future<void> login({required String mobile, required String password}) async {
-    // Demo bypass — use mobile: 9999999999, password: demo123
     if (mobile == '9999999999' && password == 'demo123') {
       final ls = ref.read(localStorageProvider);
       await ls.setMobileNo(mobile);
       await ls.setName('Demo User');
       await ref.read(secureStorageProvider).setAuthToken('demo-token');
-      state = const AsyncData(CustomerModel(
-        mobile: '9999999999', name: 'Demo User',
-      ));
+      state = const AsyncData(CustomerModel(mobile: '9999999999', name: 'Demo User'));
       return;
     }
     state = const AsyncLoading();
-    final result = await ref
-        .read(authRepositoryProvider)
-        .login(mobile: mobile, password: password);
+    final result = await ref.read(authRepositoryProvider).login(mobile: mobile, password: password);
     state = result.fold(
       (failure) => AsyncError(failure.message, StackTrace.current),
       (customer) => AsyncData(customer),
     );
   }
 
-  Future<void> checkNewNumber({required String mobile}) async {
+  /// Step 1 — returns true if mobile is new (404), false if already registered (200).
+  /// Sets state to AsyncError on network/server failures.
+  Future<bool> checkNewNumber({required String mobile}) async {
     state = const AsyncLoading();
-    final result = await ref
-        .read(authRepositoryProvider)
-        .isNewNumber(mobile: mobile);
-    state = result.fold(
-      (failure) => AsyncError(failure.message, StackTrace.current),
-      (_) => const AsyncData(null),
+    final result = await ref.read(authRepositoryProvider).isNewNumber(mobile: mobile);
+    return result.fold(
+      (failure) {
+        state = AsyncError(failure.message, StackTrace.current);
+        return false;
+      },
+      (isNew) {
+        state = const AsyncData(null);
+        return isNew;
+      },
     );
   }
 
-  Future<void> verifyOtp({required String mobile, required String otp}) async {
+  /// Step 2 — sends OTP. Returns true on success, false on failure.
+  Future<bool> sendOtp({required String mobile}) async {
     state = const AsyncLoading();
-    final result = await ref
-        .read(authRepositoryProvider)
-        .verifyOtp(mobile: mobile, otp: otp);
-    state = result.fold(
-      (failure) => AsyncError(failure.message, StackTrace.current),
-      (_) => const AsyncData(null),
+    final result = await ref.read(authRepositoryProvider).generateOtp(mobile: mobile);
+    return result.fold(
+      (failure) {
+        state = AsyncError(failure.message, StackTrace.current);
+        return false;
+      },
+      (_) {
+        state = const AsyncData(null);
+        return true;
+      },
     );
   }
 
+  /// Step 3 — verifies OTP. Returns true if verified, false if invalid.
+  Future<bool> verifyOtp({required String mobile, required String otp}) async {
+    state = const AsyncLoading();
+    final result = await ref.read(authRepositoryProvider).verifyOtp(mobile: mobile, otp: otp);
+    return result.fold(
+      (failure) {
+        state = AsyncError(failure.message, StackTrace.current);
+        return false;
+      },
+      (verified) {
+        state = const AsyncData(null);
+        return verified;
+      },
+    );
+  }
+
+  /// Step 4 — registers customer. Returns true on success.
+  Future<bool> registerCustomer({
+    required String mobile,
+    required String name,
+    required String email,
+    required String password,
+    required String deviceId,
+  }) async {
+    state = const AsyncLoading();
+    final result = await ref.read(authRepositoryProvider).saveCustomer(
+      mobile: mobile,
+      name: name,
+      email: email,
+      password: password,
+      deviceId: deviceId,
+    );
+    return result.fold(
+      (failure) {
+        state = AsyncError(failure.message, StackTrace.current);
+        return false;
+      },
+      (_) {
+        state = const AsyncData(null);
+        return true;
+      },
+    );
+  }
+
+  // Legacy — kept for forgot-password flow
   Future<void> generateOtp({required String mobile}) async {
-    state = const AsyncLoading();
-    final result =
-        await ref.read(authRepositoryProvider).generateOtp(mobile: mobile);
-    state = result.fold(
-      (failure) => AsyncError(failure.message, StackTrace.current),
-      (_) => const AsyncData(null),
-    );
+    await sendOtp(mobile: mobile);
   }
 
   Future<void> logout() async {

@@ -8,6 +8,7 @@ import '../screens/splash/splash_screen.dart';
 import '../screens/auth/login_screen.dart';
 import '../screens/auth/signup_screen.dart';
 import '../screens/auth/otp_screen.dart';
+import '../screens/auth/registration_form_screen.dart';
 import '../screens/auth/forgot_password_screen.dart';
 import '../screens/home/home_screen.dart';
 import '../screens/booking/booking_history_screen.dart';
@@ -45,6 +46,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           state.matchedLocation == RouteNames.signup ||
           state.matchedLocation == RouteNames.splash ||
           state.matchedLocation == RouteNames.otp ||
+          state.matchedLocation == RouteNames.registrationForm ||
           state.matchedLocation == RouteNames.forgotPassword;
 
       if (!isLoggedIn && !isAuthRoute) return RouteNames.login;
@@ -71,6 +73,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             mobile: extra?['mobile'] ?? '',
             isForForgotPassword: extra?['isForForgotPassword'] ?? false,
           );
+        },
+      ),
+      GoRoute(
+        path: RouteNames.registrationForm,
+        builder: (context, state) {
+          final extra = state.extra as Map<String, dynamic>?;
+          return RegistrationFormScreen(mobile: extra?['mobile'] ?? '');
         },
       ),
       GoRoute(

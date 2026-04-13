@@ -37,34 +37,31 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
   Future<void> _onVerify() async {
     if (!_formKey.currentState!.validate()) return;
     final notifier = ref.read(authNotifierProvider.notifier);
-    await notifier.verifyOtp(
+
+    final verified = await notifier.verifyOtp(
       mobile: widget.mobile,
       otp: _otpCtrl.text.trim(),
     );
     if (!mounted) return;
-    final state = ref.read(authNotifierProvider);
-    state.whenOrNull(
-      data: (_) {
-        if (widget.isForForgotPassword) {
-          context.go(RouteNames.forgotPassword);
-        } else {
-          context.go(RouteNames.home);
-        }
-      },
-      error: (e, _) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString()),
-            backgroundColor: AppColors.statusCancelled,
-          ),
-        );
-      },
-    );
+
+    if (!verified) {
+      final err = ref.read(authNotifierProvider).error?.toString() ?? 'Invalid OTP. Please try again.';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(err), backgroundColor: AppColors.statusCancelled),
+      );
+      return;
+    }
+
+    if (widget.isForForgotPassword) {
+      context.go(RouteNames.forgotPassword);
+    } else {
+      // Step 3 passed — go to registration form
+      context.push(RouteNames.registrationForm, extra: {'mobile': widget.mobile});
+    }
   }
 
   Future<void> _onResend() async {
-    final notifier = ref.read(authNotifierProvider.notifier);
-    await notifier.generateOtp(mobile: widget.mobile);
+    await ref.read(authNotifierProvider.notifier).sendOtp(mobile: widget.mobile);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('OTP resent')),
@@ -90,15 +87,10 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 24),
-              Text(
-                'Enter the OTP sent to',
-                style: AppTextStyles.bodyMedium,
-              ),
+              Text('Enter the OTP sent to', style: AppTextStyles.bodyMedium),
               Text(
                 '+91 ${widget.mobile}',
-                style: AppTextStyles.titleMedium.copyWith(
-                  color: AppColors.accentYellow,
-                ),
+                style: AppTextStyles.titleMedium.copyWith(color: AppColors.accentYellow),
               ),
               const SizedBox(height: 32),
               PickcTextField(
@@ -121,9 +113,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                   onPressed: _onResend,
                   child: Text(
                     'Resend OTP',
-                    style: AppTextStyles.bodyMedium.copyWith(
-                      color: AppColors.accentYellow,
-                    ),
+                    style: AppTextStyles.bodyMedium.copyWith(color: AppColors.accentYellow),
                   ),
                 ),
               ),

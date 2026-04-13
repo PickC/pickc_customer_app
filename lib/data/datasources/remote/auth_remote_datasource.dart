@@ -61,6 +61,7 @@ class AuthRemoteDatasource {
     required String name,
     required String email,
     required String password,
+    required String deviceId,
   }) async {
     final response = await _dio.post(
       ApiConstants.saveCustomer,
@@ -69,6 +70,7 @@ class AuthRemoteDatasource {
         'name': name,
         'emailID': email,
         'password': password,
+        'deviceID': deviceId,
       },
     );
     return CustomerModel.fromJson(response.data as Map<String, dynamic>);

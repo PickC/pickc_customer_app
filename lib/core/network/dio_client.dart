@@ -19,17 +19,18 @@ class DioClient {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
-          // Skip auth headers for login/otp/refresh — no token available yet
-          final isAuthEndpoint = options.path.startsWith('auth/') &&
-              !options.path.contains('auth/logout');
-          if (!isAuthEndpoint) {
+          // Skip auth headers for public endpoints (no token available)
+          final path = options.path;
+          final isPublicEndpoint = path.startsWith('auth/') && !path.contains('auth/logout') ||
+              path == ApiConstants.saveCustomer ||       // POST master/customers — signup
+              path.startsWith(ApiConstants.getCustomer.split('{')[0]); // GET master/customers/{no}
+          if (!isPublicEndpoint) {
             final token = await _secureStorage.getAuthToken();
             final mobile = await _secureStorage.getMobileNo();
+            // Only add auth headers when a valid token exists
             if (token != null) {
               options.headers['Authorization'] = 'Bearer $token';
-            }
-            if (mobile != null) {
-              options.headers['MOBILENO'] = mobile;
+              if (mobile != null) options.headers['MOBILENO'] = mobile;
             }
           }
           return handler.next(options);
