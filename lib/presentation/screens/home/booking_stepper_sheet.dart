@@ -530,30 +530,54 @@ String _imageFor(String name, bool isOpen) {
 // Step 2 — Cargo type + weight
 // ─────────────────────────────────────────────────────────────────────────────
 
-(IconData, Color) _iconForCargo(String code) {
-  final c = code.toLowerCase();
+(IconData, Color) _iconForCargo(String code, {String? description}) {
+  // Match on both code AND description so API codes like "VegFruits" still hit
+  final c = '${code.toLowerCase()} ${(description ?? '').toLowerCase()}';
+
   if (c.contains('industrial') || c.contains('machin') || c.contains('equipment')) {
     return (Icons.precision_manufacturing_outlined, const Color(0xFFFF8C00));
   }
-  if (c.contains('vegetable') || c.contains('fruit') || c.contains('food') || c.contains('agri') || c.contains('produce')) {
-    return (Icons.eco_outlined, const Color(0xFF4CAF50));
+  if (c.contains('vegetable') || c.contains('veg') || c.contains('fruit') ||
+      c.contains('agri') || c.contains('produce')) {
+    return (Icons.grass, const Color(0xFF66BB6A));
   }
-  if (c.contains('household') || c.contains('home') || c.contains('furniture') || c.contains('shifting')) {
+  if (c.contains('household') || c.contains('furniture') || c.contains('shifting') ||
+      (c.contains('home') && !c.contains('hospital'))) {
     return (Icons.chair_outlined, const Color(0xFF42A5F5));
   }
-  if (c.contains('fragile') || c.contains('glass') || c.contains('breakable') || c.contains('ceramic')) {
+  if (c.contains('fragile') || c.contains('glass') || c.contains('breakable') ||
+      c.contains('ceramic')) {
     return (Icons.local_bar_outlined, const Color(0xFFEF5350));
   }
-  if (c.contains('pharma') || c.contains('medicine') || c.contains('medical') || c.contains('health')) {
+  if (c.contains('construct') || c.contains('cement') || c.contains('brick') ||
+      c.contains('sand') || c.contains('material') && !c.contains('pharma')) {
+    return (Icons.construction, const Color(0xFFFF7043));
+  }
+  if (c.contains('grocer') || c.contains('grocery')) {
+    return (Icons.shopping_basket_outlined, const Color(0xFF26A69A));
+  }
+  if (c.contains('pharma') || c.contains('medicine') || c.contains('medical') ||
+      c.contains('health') || c.contains('pharmacy')) {
     return (Icons.medical_services_outlined, const Color(0xFF26C6DA));
   }
   if (c.contains('electronic') || c.contains('appliance') || c.contains('device')) {
     return (Icons.devices_outlined, const Color(0xFF7E57C2));
   }
+  if (c.contains('hotel') || c.contains('hospital') || c.contains('hospitalit')) {
+    return (Icons.business_outlined, const Color(0xFF5C6BC0));
+  }
+  if (c.contains('liquid') || c.contains('fluid') || c.contains('beverage') ||
+      c.contains('drink') || c.contains('water') && !c.contains('waterproof')) {
+    return (Icons.water_drop_outlined, const Color(0xFF29B6F6));
+  }
+  if (c.contains('food') || c.contains('dairy')) {
+    return (Icons.fastfood_outlined, const Color(0xFFFFA726));
+  }
   if (c.contains('chemical') || c.contains('hazard')) {
     return (Icons.science_outlined, const Color(0xFFAB47BC));
   }
-  if (c.contains('textile') || c.contains('cloth') || c.contains('fabric') || c.contains('garment')) {
+  if (c.contains('textile') || c.contains('cloth') || c.contains('fabric') ||
+      c.contains('garment')) {
     return (Icons.checkroom_outlined, const Color(0xFFEC407A));
   }
   if (c.contains('steel') || c.contains('metal') || c.contains('iron')) {
@@ -625,7 +649,7 @@ class _Step2Cargo extends ConsumerWidget {
                     child: Row(
                       children: [
                         Builder(builder: (_) {
-                          final (iconData, iconColor) = _iconForCargo(item.code);
+                          final (iconData, iconColor) = _iconForCargo(item.code, description: item.description);
                           return Icon(
                             iconData,
                             color: isSelected ? AppColors.accentYellow : iconColor,

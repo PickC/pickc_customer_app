@@ -105,8 +105,16 @@ class LoadingUnloadingCard extends ConsumerWidget {
                             Icon(Icons.download_outlined, size: 16, color: color),
                       );
                 case LabourOption.both:
-                  return (color) =>
-                      Icon(Icons.swap_vert, size: 16, color: color);
+                  final path = isOpen
+                      ? 'assets/helper/all_selected_open.png'
+                      : 'assets/helper/all_selected_closed.png';
+                  return (color) => Image.asset(
+                        path,
+                        width: 22,
+                        height: 22,
+                        errorBuilder: (_, _, _) =>
+                            Icon(Icons.swap_vert, size: 16, color: color),
+                      );
                 case LabourOption.none:
                   return (color) =>
                       Icon(Icons.do_not_disturb_alt_outlined, size: 16, color: color);
