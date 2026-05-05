@@ -18,16 +18,25 @@ class AuthRepository {
   /// Avoids dumping raw HTML (e.g. Azure 503/403 pages) to the UI.
   String _cleanError(DioException e, String fallback) {
     final status = e.response?.statusCode;
-    final data = e.response?.data?.toString() ?? '';
-    if (data.trimLeft().startsWith('<')) {
-      // HTML response — return a generic message based on status code
-      if (status == 403) return 'Server unavailable (403). Please try again later.';
-      if (status == 503) return 'Server unavailable (503). Please try again later.';
-      if (status == 404) return 'Not found (404).';
+    final raw = e.response?.data;
+
+    // HTML response — Azure/IIS error pages
+    if (raw is String && raw.trimLeft().startsWith('<')) {
+      if (status == 403) return 'Server unavailable. Please try again later.';
+      if (status == 503) return 'Service unavailable. Please try again later.';
+      if (status == 404) return 'Resource not found.';
       if (status == 500) return 'Internal server error. Please try again.';
-      return 'Server error ($status). Please try again later.';
+      return 'Server error. Please try again later.';
     }
-    return data.isNotEmpty ? data : (e.message ?? fallback);
+
+    // JSON object — extract "message" field if present
+    if (raw is Map) {
+      final msg = raw['message'] ?? raw['error'] ?? raw['title'];
+      if (msg != null && msg.toString().isNotEmpty) return msg.toString();
+    }
+
+    final str = raw?.toString() ?? '';
+    return str.isNotEmpty ? str : (e.message ?? fallback);
   }
 
   Future<Either<Failure, CustomerModel>> login({

@@ -1,5 +1,5 @@
 import '../data/models/auth/customer_model.dart';
-import '../data/models/booking/booking_history_model.dart';
+import '../data/models/booking/booking_model.dart';
 import '../data/models/driver/driver_model.dart';
 import '../data/models/invoice/invoice_model.dart';
 import '../data/models/vehicle/vehicle_type_model.dart';
@@ -34,46 +34,52 @@ class MockData {
     VehicleTypeModel(id: 5, name: 'Truck 407', description: 'Up to 5 Ton'),
   ];
 
-  static const bookings = <BookingHistoryModel>[
-    BookingHistoryModel(
+  static final bookings = <BookingModel>[
+    BookingModel(
       bookingNo: 'PKC-2024-001',
-      fromAddress: '12, MG Road, Andheri West, Mumbai',
-      toAddress: '45, Link Road, Goregaon East, Mumbai',
-      status: 'Completed',
-      date: '22 Mar 2024',
-      vehicleType: 'Mini Truck',
-      amount: '850',
-      driverName: 'Raju Sharma',
+      locationFrom: '12, MG Road, Andheri West, Mumbai',
+      locationTo: '45, Link Road, Goregaon East, Mumbai',
+      vehicleTypeName: 'Mini Truck',
+      vehicleGroupName: 'Mini',
+      cargoType: 'Household',
+      payLoad: '500',
+      isComplete: true,
+      isConfirm: true,
+      isReachPickUp: true,
+      isReachDestination: true,
+      driverID: 'DRV101',
+      vehicleNo: 'MH 04 AB 1234',
     ),
-    BookingHistoryModel(
+    BookingModel(
       bookingNo: 'PKC-2024-002',
-      fromAddress: 'Bandra Station, Bandra West, Mumbai',
-      toAddress: 'Kurla Complex, Kurla East, Mumbai',
-      status: 'Cancelled',
-      date: '15 Mar 2024',
-      vehicleType: 'Pickup Van',
-      amount: '650',
-      driverName: 'Suresh Kumar',
+      locationFrom: 'Bandra Station, Bandra West, Mumbai',
+      locationTo: 'Kurla Complex, Kurla East, Mumbai',
+      vehicleTypeName: 'Pickup Van',
+      vehicleGroupName: 'Small',
+      cargoType: 'Industrial',
+      payLoad: '300',
+      isCancel: true,
     ),
-    BookingHistoryModel(
+    BookingModel(
       bookingNo: 'PKC-2024-003',
-      fromAddress: 'Malad West Market, Mumbai',
-      toAddress: 'Thane Station Road, Thane',
-      status: 'Confirmed',
-      date: '10 Mar 2024',
-      vehicleType: 'Tata Ace',
-      amount: '1200',
-      driverName: 'Manoj Patil',
+      locationFrom: 'Malad West Market, Mumbai',
+      locationTo: 'Thane Station Road, Thane',
+      vehicleTypeName: 'Tata Ace',
+      vehicleGroupName: 'Small',
+      cargoType: 'Vegetables',
+      payLoad: '800',
+      isConfirm: true,
+      driverID: 'DRV203',
+      vehicleNo: 'MH 02 CD 5678',
     ),
-    BookingHistoryModel(
+    BookingModel(
       bookingNo: 'PKC-2024-004',
-      fromAddress: 'Dadar TT Circle, Mumbai',
-      toAddress: 'Navi Mumbai APMC, Vashi',
-      status: 'Pending',
-      date: '05 Mar 2024',
-      vehicleType: 'Canter',
-      amount: '2100',
-      driverName: 'Arun Desai',
+      locationFrom: 'Dadar TT Circle, Mumbai',
+      locationTo: 'Navi Mumbai APMC, Vashi',
+      vehicleTypeName: 'Canter',
+      vehicleGroupName: 'Medium',
+      cargoType: 'Industrial',
+      payLoad: '2000',
     ),
   ];
 

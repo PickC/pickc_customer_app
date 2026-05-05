@@ -45,3 +45,8 @@ app.*.map.json
 /android/app/release
 .env
 .claude/
+
+# Android signing — never commit these
+android/key.properties
+*.jks
+*.keystore

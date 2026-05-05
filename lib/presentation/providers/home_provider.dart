@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import '../../core/constants/api_constants.dart';
 import '../../core/constants/demo_mode.dart';
 import '../../data/models/driver/driver_model.dart';
 import 'providers.dart';
+import 'vehicle_provider.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Enums
@@ -49,16 +51,25 @@ final homeNotifierProvider =
 final currentDriverProvider =
     AsyncNotifierProvider<DriverNotifier, DriverModel?>(DriverNotifier.new);
 
+/// ID of the selected vehicle group (Mini, Small, Medium, Large).
 final selectedVehicleProvider = StateProvider<int?>((ref) => null);
+
+/// lookupID for the body type: 1300 = Open, 1301 = Closed.
+/// Defaults to Open when a vehicle tile is first selected.
+final selectedVehicleTypeIdProvider = StateProvider<int>((ref) => 1300);
 final otpProvider = StateProvider<String>((ref) => '');
 final etaMinutesProvider = StateProvider<int>((ref) => 0);
+/// null = user hasn't chosen yet (shown as no chip highlighted).
 final labourOptionProvider =
-    StateProvider<LabourOption>((ref) => LabourOption.none);
+    StateProvider<LabourOption?>((ref) => null);
 final cargoTypeProvider = StateProvider<CargoType?>((ref) => null);
 final cargoWeightProvider = StateProvider<String>((ref) => '');
 final receiverMobileProvider = StateProvider<String?>((ref) => null);
 final scheduledDateTimeProvider = StateProvider<DateTime?>((ref) => null);
 final bookingCancelledProvider = StateProvider<bool>((ref) => false);
+
+/// Non-null when a booking API error occurs — HomeScreen shows a SnackBar then clears it.
+final bookingErrorProvider = StateProvider<String?>((ref) => null);
 final tripEventProvider = StateProvider<TripEvent>((ref) => TripEvent.none);
 
 /// Set to amount string (e.g. '1.00') when cash payment is done.
@@ -73,9 +84,29 @@ final dropLatLngProvider = StateProvider<LatLng?>((ref) => null);
 final pickupAddressProvider = StateProvider<String>((ref) => '');
 final dropAddressProvider = StateProvider<String>((ref) => '');
 
+/// Tracks which location field the user is currently setting.
+/// true = pickup, false = drop
+final activeLocationFieldProvider = StateProvider<bool>((ref) => true);
+
 /// Decoded polyline point lists (filled after Directions API call).
 final driverToPickupRouteProvider = StateProvider<List<LatLng>>((ref) => []);
 final pickupToDropRouteProvider = StateProvider<List<LatLng>>((ref) => []);
+
+/// Straight-line distance in km between pickup and drop (Haversine).
+/// Returns null if either location is not set.
+final routeDistanceKmProvider = Provider<double?>((ref) {
+  final pickup = ref.watch(pickupLatLngProvider);
+  final drop = ref.watch(dropLatLngProvider);
+  if (pickup == null || drop == null) return null;
+  const r = 6371.0;
+  final dLat = (drop.latitude - pickup.latitude) * pi / 180;
+  final dLon = (drop.longitude - pickup.longitude) * pi / 180;
+  final lat1 = pickup.latitude * pi / 180;
+  final lat2 = drop.latitude * pi / 180;
+  final a = sin(dLat / 2) * sin(dLat / 2) +
+      cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2);
+  return r * 2 * atan2(sqrt(a), sqrt(1 - a));
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Truck icon — loaded once from assets
@@ -83,22 +114,22 @@ final pickupToDropRouteProvider = StateProvider<List<LatLng>>((ref) => []);
 
 final truckMarkerIconProvider = FutureProvider<BitmapDescriptor>((ref) async {
   return BitmapDescriptor.asset(
-    const ImageConfiguration(devicePixelRatio: 2.5, size: Size(56, 56)),
-    'assets/trucks/mini_opened_truck.png',
+    const ImageConfiguration(devicePixelRatio: 2.5, size: Size(48, 48)),
+    'assets/images/open_truck_symbol_marker.png',
   );
 });
 
 final pickupMarkerIconProvider = FutureProvider<BitmapDescriptor>((ref) async {
   return BitmapDescriptor.asset(
     const ImageConfiguration(devicePixelRatio: 2.5, size: Size(48, 48)),
-    'assets/images/source2.png',
+    'assets/images/source.png',
   );
 });
 
 final dropMarkerIconProvider = FutureProvider<BitmapDescriptor>((ref) async {
   return BitmapDescriptor.asset(
     const ImageConfiguration(devicePixelRatio: 2.5, size: Size(48, 48)),
-    'assets/images/destination2.png',
+    'assets/images/destination.png',
   );
 });
 
@@ -121,9 +152,8 @@ final mapMarkersProvider = Provider<Set<Marker>>((ref) {
 
   final markers = <Marker>{};
 
-  // Pickup marker — only when locations are locked (selectingTrucks+)
-  if (pickupLatLng != null &&
-      homeState != HomeState.idle) {
+  // Pickup marker — show whenever a pickup location is locked in
+  if (pickupLatLng != null && homeState != HomeState.idle && homeState != HomeState.selectingTrucks) {
     markers.add(Marker(
       markerId: const MarkerId('pickup'),
       position: pickupLatLng,
@@ -133,8 +163,8 @@ final mapMarkersProvider = Provider<Set<Marker>>((ref) {
     ));
   }
 
-  // Drop marker
-  if (dropLatLng != null) {
+  // Drop marker — show from waitingForDriver onwards
+  if (dropLatLng != null && homeState != HomeState.idle && homeState != HomeState.selectingTrucks) {
     markers.add(Marker(
       markerId: const MarkerId('drop'),
       position: dropLatLng,
@@ -176,12 +206,22 @@ final mapPolylinesProvider = Provider<Set<Polyline>>((ref) {
   final driverRoute = ref.watch(driverToPickupRouteProvider);
   final tripRoute = ref.watch(pickupToDropRouteProvider);
 
-  if (homeState != HomeState.bookingConfirmed &&
-      homeState != HomeState.tripActive) {
+  // Only show routes once booking is submitted (waitingForDriver and beyond)
+  if (homeState == HomeState.idle || homeState == HomeState.selectingTrucks) {
     return {};
   }
 
   final polylines = <Polyline>{};
+
+  // Solid black line: pickup → drop — shown from booking creation onwards
+  if (tripRoute.isNotEmpty) {
+    polylines.add(Polyline(
+      polylineId: const PolylineId('pickup_to_drop'),
+      points: tripRoute,
+      color: Colors.black,
+      width: 4,
+    ));
+  }
 
   // Dashed blue line: driver → pickup (only when driver en route to pickup)
   if (driverRoute.isNotEmpty && homeState == HomeState.bookingConfirmed) {
@@ -191,27 +231,6 @@ final mapPolylinesProvider = Provider<Set<Polyline>>((ref) {
       color: const Color(0xFF29B6F6),
       width: 4,
       patterns: [PatternItem.dash(18), PatternItem.gap(8)],
-    ));
-  }
-
-  // Dotted grey line: pickup → drop (future route preview)
-  if (tripRoute.isNotEmpty) {
-    polylines.add(Polyline(
-      polylineId: const PolylineId('pickup_to_drop'),
-      points: tripRoute,
-      color: const Color(0xFF757575),
-      width: 3,
-      patterns: [PatternItem.dot, PatternItem.gap(6)],
-    ));
-  }
-
-  // Solid yellow line: active trip route (reuse tripRoute when tripActive)
-  if (tripRoute.isNotEmpty && homeState == HomeState.tripActive) {
-    polylines.add(Polyline(
-      polylineId: const PolylineId('active_trip'),
-      points: tripRoute,
-      color: const Color(0xFFF8F206),
-      width: 4,
     ));
   }
 
@@ -267,10 +286,66 @@ class HomeNotifier extends Notifier<HomeState> {
     required String dropAddress,
   }) {
     state = HomeState.selectingTrucks;
+    // Fire-and-forget — populate nearby vehicle markers from the pickup point
+    final pickup = ref.read(pickupLatLngProvider);
+    if (pickup != null) {
+      _fetchNearbyBookingMarkers(pickup);
+    }
+  }
+
+  /// Calls the nearby-bookings endpoint centred on [pickup] with a 5 km radius
+  /// and converts the results into map markers stored in [nearbyVehicleMarkersProvider].
+  Future<void> _fetchNearbyBookingMarkers(LatLng pickup) async {
+    try {
+      final dio = ref.read(dioClientProvider).dio;
+      final response = await dio.get(
+        ApiConstants.nearbyBookings,
+        queryParameters: {
+          'lat': pickup.latitude,
+          'lng': pickup.longitude,
+          'range': 5,
+        },
+      );
+
+      final list = response.data as List<dynamic>? ?? [];
+      if (list.isEmpty) return;
+
+      // Reuse the truck icon if it's already loaded
+      final truckIcon = ref.read(truckMarkerIconProvider).valueOrNull;
+
+      final markers = <Marker>{};
+      for (int i = 0; i < list.length; i++) {
+        final item = list[i] as Map<String, dynamic>;
+        final lat = (item['latitude'] as num?)?.toDouble();
+        final lng = (item['longitude'] as num?)?.toDouble();
+        if (lat == null || lng == null) continue;
+
+        final bookingNo = item['bookingNo'] as String? ?? 'nearby_$i';
+        final distKm    = (item['distanceKm'] as num?)?.toStringAsFixed(1) ?? '?';
+
+        markers.add(Marker(
+          markerId: MarkerId('nearby_$bookingNo'),
+          position: LatLng(lat, lng),
+          icon: truckIcon ??
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
+          infoWindow: InfoWindow(
+            title: 'Pickup nearby',
+            snippet: '$distKm km away',
+          ),
+        ));
+      }
+
+      ref.read(nearbyVehicleMarkersProvider.notifier).state = markers;
+    } catch (e) {
+      debugPrint('[nearbyBookings] fetch error: $e');
+      // Non-fatal — map just shows no nearby markers
+    }
   }
 
   void selectVehicle(dynamic vehicle) {
     ref.read(selectedVehicleProvider.notifier).state = vehicle.id as int?;
+    // Reset body type to Open (1300) whenever the vehicle group changes
+    ref.read(selectedVehicleTypeIdProvider.notifier).state = 1300;
   }
 
   Future<void> confirmBooking() async {
@@ -284,9 +359,10 @@ class HomeNotifier extends Notifier<HomeState> {
     final drop = ref.read(dropLatLngProvider);
     final pickupAddress = ref.read(pickupAddressProvider);
     final dropAddress = ref.read(dropAddressProvider);
-    final vehicleTypeId = ref.read(selectedVehicleProvider);
-    final labour = ref.read(labourOptionProvider);
-    final cargo = ref.read(cargoTypeProvider);
+    final vehicleGroupId  = ref.read(selectedVehicleProvider);       // mini/small/medium/large group ID
+    final vehicleTypeCode = ref.read(selectedVehicleTypeIdProvider);  // 1300=Open, 1301=Closed
+    final cargoCode       = ref.read(selectedCargoCodeProvider) ?? '';   // string code the API expects for cargoType
+    final labour = ref.read(labourOptionProvider); // fallback index if loading lookup not yet set
     final weight = ref.read(cargoWeightProvider);
     final receiverMobile = ref.read(receiverMobileProvider);
     final scheduledAt = ref.read(scheduledDateTimeProvider);
@@ -301,25 +377,32 @@ class HomeNotifier extends Notifier<HomeState> {
       await localStorage.setToLong(drop.longitude);
     }
 
+    final payload = {
+      'customerID': mobile,
+      'locationFrom': pickupAddress,
+      'locationTo': dropAddress,
+      'latitude': pickup?.latitude ?? 0,
+      'longitude': pickup?.longitude ?? 0,
+      'toLatitude': drop?.latitude ?? 0,
+      'toLongitude': drop?.longitude ?? 0,
+      'vehicleGroup': vehicleGroupId ?? 0,   // mini/small/medium/large group ID
+      'vehicleType': vehicleTypeCode,         // 1300=Open, 1301=Closed
+      'loadingUnLoading': (labour ?? LabourOption.none).index, // 0=None, 1=Loading, 2=Unloading, 3=Both
+      'cargoType': cargoCode,                  // string code the API expects (e.g. "Industrial")
+      'payLoad': weight.trim().isEmpty ? '0' : weight.trim(), // string — API model is string
+      'receiverMobileNo': receiverMobile ?? mobile,
+      'requiredDate': (scheduledAt ?? DateTime.now()).toIso8601String(),
+      'status': 0,
+    };
+    final prettyJson = const JsonEncoder.withIndent('  ').convert(payload);
+    debugPrint('==== BOOKING PAYLOAD ====');
+    debugPrint(prettyJson);
+    debugPrint('=========================');
+
     try {
       final response = await dio.post(
         ApiConstants.createBooking,
-        data: {
-          'customerID': mobile,
-          'locationFrom': pickupAddress,
-          'locationTo': dropAddress,
-          'latitude': pickup?.latitude ?? 0,
-          'longitude': pickup?.longitude ?? 0,
-          'toLatitude': drop?.latitude ?? 0,
-          'toLongitude': drop?.longitude ?? 0,
-          'vehicleType': vehicleTypeId ?? 0,
-          'loadingUnLoading': labour.index, // 0=none,1=load,2=unload,3=both
-          'cargoType': cargo?.name ?? '',
-          'payLoad': weight,
-          'receiverMobileNo': receiverMobile ?? mobile,
-          'requiredDate': (scheduledAt ?? DateTime.now()).toIso8601String(),
-          'status': 0,
-        },
+        data: payload,
       );
 
       final bookingNo = (response.data['bookingNo'] ??
@@ -331,20 +414,41 @@ class HomeNotifier extends Notifier<HomeState> {
         await localStorage.setIsInTrip(true);
       }
 
+      // Immediately fetch pickup→drop route so the black line shows on map
+      if (pickup != null && drop != null) {
+        _getRoute(pickup, drop, pickupToDropRouteProvider);
+      }
+
       // Poll isConfirm every 5 s until driver accepts
       _startDriverConfirmPolling(bookingNo);
-    } on DioException catch (_) {
+    } on DioException catch (e) {
       if (kDemoMode) {
+        _fetchPickupToDropRoute();
         _runDemoDriverAssignment();
       } else {
         state = HomeState.selectingTrucks;
+        // Extract the most useful part of the API error for display/debugging
+        final apiMsg = e.response?.data?.toString() ?? e.message ?? 'Unknown error';
+        debugPrint('[confirmBooking] DioException: ${e.response?.statusCode} — $apiMsg');
+        ref.read(bookingErrorProvider.notifier).state = 'Booking failed: $apiMsg';
       }
-    } catch (_) {
+    } catch (e) {
       if (kDemoMode) {
+        _fetchPickupToDropRoute();
         _runDemoDriverAssignment();
       } else {
         state = HomeState.selectingTrucks;
+        debugPrint('[confirmBooking] Error: $e');
+        ref.read(bookingErrorProvider.notifier).state = 'Something went wrong. Please try again.';
       }
+    }
+  }
+
+  void _fetchPickupToDropRoute() {
+    final pickup = ref.read(pickupLatLngProvider);
+    final drop = ref.read(dropLatLngProvider);
+    if (pickup != null && drop != null) {
+      _getRoute(pickup, drop, pickupToDropRouteProvider);
     }
   }
 
@@ -368,11 +472,12 @@ class HomeNotifier extends Notifier<HomeState> {
       final response = await dio.get(url);
       final data = response.data as Map<String, dynamic>? ?? {};
 
-      // Booking is confirmed when driverID is assigned (non-null/non-empty)
-      final driverId = data['driverID']?.toString() ?? '';
-      final status = data['status'] as int?;
+      // Booking is confirmed when isConfirm=true, driverID is set, or status>=1
+      final isConfirm = data['isConfirm'] as bool? ?? false;
+      final driverId  = data['driverID']?.toString() ?? '';
+      final status    = int.tryParse(data['status']?.toString() ?? '0') ?? 0;
       // status: 0=pending, 1=confirmed, 2=active, 3=completed, 4=cancelled
-      final isConfirmed = driverId.isNotEmpty || (status != null && status >= 1);
+      final isConfirmed = isConfirm || driverId.isNotEmpty || status >= 1;
       if (!isConfirmed) return;
 
       _driverConfirmTimer?.cancel();
@@ -502,8 +607,8 @@ class HomeNotifier extends Notifier<HomeState> {
         case 4:
           // Unloading if selected
           final labour = ref.read(labourOptionProvider);
-          if (labour == LabourOption.unloading ||
-              labour == LabourOption.both) {
+          if (labour != null && (labour == LabourOption.unloading ||
+              labour == LabourOption.both)) {
             ref.read(tripEventProvider.notifier).state =
                 TripEvent.unloadingCargo;
           }
@@ -531,10 +636,154 @@ class HomeNotifier extends Notifier<HomeState> {
     ref.read(pickupLatLngProvider.notifier).state = null;
     ref.read(dropLatLngProvider.notifier).state = null;
     ref.read(selectedVehicleProvider.notifier).state = null;
+    ref.read(selectedVehicleTypeIdProvider.notifier).state = 1300;
+    ref.read(selectedCargoLookupIdProvider.notifier).state = null;
+    ref.read(selectedCargoCodeProvider.notifier).state = null;
+    ref.read(selectedLoadingLookupIdProvider.notifier).state = null;
+    ref.read(labourOptionProvider.notifier).state = null;
     ref.read(cargoTypeProvider.notifier).state = null;
     ref.read(cargoWeightProvider.notifier).state = '';
     ref.read(receiverMobileProvider.notifier).state = null;
     ref.read(scheduledDateTimeProvider.notifier).state = null;
+    state = HomeState.idle;
+  }
+
+  /// Called on app start. If a booking was in progress before the app was
+  /// closed, restores providers and resumes the correct state.
+  /// Returns true if an active booking was found and restored.
+  Future<bool> restoreActiveBookingIfAny() async {
+    final localStorage = ref.read(localStorageProvider);
+    if (!localStorage.isInTrip()) return false;
+
+    final bookingNo = localStorage.getBookingNo() ?? '';
+    if (bookingNo.isEmpty) {
+      await localStorage.setIsInTrip(false);
+      return false;
+    }
+
+    // Restore persisted coordinates immediately so the map has something to show
+    final fromLat = localStorage.getFromLat();
+    final fromLng = localStorage.getFromLong();
+    final toLat   = localStorage.getToLat();
+    final toLng   = localStorage.getToLong();
+    if (fromLat != 0 && fromLng != 0) {
+      ref.read(pickupLatLngProvider.notifier).state = LatLng(fromLat, fromLng);
+    }
+    if (toLat != 0 && toLng != 0) {
+      ref.read(dropLatLngProvider.notifier).state = LatLng(toLat, toLng);
+    }
+
+    // Optimistically show waitingForDriver while we fetch the real status
+    state = HomeState.waitingForDriver;
+
+    try {
+      final dio = ref.read(dioClientProvider).dio;
+      final url = ApiConstants.getBooking.replaceAll('{bookingNo}', bookingNo);
+      final response = await dio.get(url);
+      final data = response.data as Map<String, dynamic>? ?? {};
+
+      // Restore addresses from booking record if available
+      final pickupAddr = data['locationFrom'] as String? ?? '';
+      final dropAddr   = data['locationTo']   as String? ?? '';
+      if (pickupAddr.isNotEmpty) {
+        ref.read(pickupAddressProvider.notifier).state = pickupAddr;
+      }
+      if (dropAddr.isNotEmpty) {
+        ref.read(dropAddressProvider.notifier).state = dropAddr;
+      }
+
+      // Prefer coordinates from API over cached values
+      final pLat = (data['latitude']    as num?)?.toDouble();
+      final pLng = (data['longitude']   as num?)?.toDouble();
+      final dLat = (data['toLatitude']  as num?)?.toDouble();
+      final dLng = (data['toLongitude'] as num?)?.toDouble();
+      if (pLat != null && pLng != null) {
+        ref.read(pickupLatLngProvider.notifier).state = LatLng(pLat, pLng);
+      }
+      if (dLat != null && dLng != null) {
+        ref.read(dropLatLngProvider.notifier).state = LatLng(dLat, dLng);
+      }
+
+      final status   = int.tryParse(data['status']?.toString() ?? '0') ?? 0;
+      final driverId = data['driverID']?.toString() ?? '';
+      final isConfirm = data['isConfirm'] as bool? ?? false;
+
+      // Cancelled (4) or Completed (3) — clean up persisted state
+      if (status >= 3) {
+        await localStorage.setIsInTrip(false);
+        state = HomeState.idle;
+        return false;
+      }
+
+      _fetchPickupToDropRoute();
+
+      // Driver has been assigned (isConfirm=true, status 1+, or driverID present)
+      if (isConfirm || status >= 1 || driverId.isNotEmpty) {
+        final pickup    = ref.read(pickupLatLngProvider);
+        final driverLat = (data['currentLat'] as num?)?.toDouble();
+        final driverLng = (data['currentLng'] as num?)?.toDouble();
+        final driverPos = (driverLat != null && driverLng != null)
+            ? LatLng(driverLat, driverLng)
+            : (pickup != null
+                ? LatLng(pickup.latitude + 0.014, pickup.longitude + 0.009)
+                : const LatLng(17.4486, 78.3908));
+
+        if (driverId.isNotEmpty) {
+          await ref.read(localStorageProvider).setDriverId(driverId);
+        }
+        await ref.read(currentDriverProvider.notifier).loadDriver(
+          bookingNo: bookingNo,
+          position: driverPos,
+          driverData: data,
+        );
+        state = HomeState.bookingConfirmed;
+        _fetchRoutes(driverPos);
+        startPolling();
+      } else {
+        // Still waiting for driver to accept
+        _startDriverConfirmPolling(bookingNo);
+      }
+    } catch (_) {
+      // Network unavailable — stay at waitingForDriver and start confirm polling
+      _startDriverConfirmPolling(bookingNo);
+    }
+
+    return true;
+  }
+
+  /// Cancels the active booking via DELETE and resets to idle.
+  /// Called when the user confirms they want to close the app while a booking
+  /// is in the waitingForDriver state.
+  Future<void> deleteBookingOnExit() async {
+    _cancelAllTimers();
+    final localStorage = ref.read(localStorageProvider);
+    final bookingNo    = localStorage.getBookingNo() ?? '';
+
+    if (bookingNo.isNotEmpty) {
+      try {
+        final dio = ref.read(dioClientProvider).dio;
+        final url = ApiConstants.deleteBooking
+            .replaceAll('{bookingNo}', bookingNo);
+        await dio.delete(url);
+      } catch (_) {
+        // Non-fatal — clean up local state regardless
+      }
+    }
+
+    await localStorage.setIsInTrip(false);
+
+    ref.read(otpProvider.notifier).state = '';
+    ref.read(etaMinutesProvider.notifier).state = 0;
+    ref.read(driverToPickupRouteProvider.notifier).state = [];
+    ref.read(pickupToDropRouteProvider.notifier).state = [];
+    ref.read(tripEventProvider.notifier).state = TripEvent.none;
+    ref.read(selectedVehicleProvider.notifier).state = null;
+    ref.read(selectedVehicleTypeIdProvider.notifier).state = 1300;
+    ref.read(selectedCargoLookupIdProvider.notifier).state = null;
+    ref.read(selectedCargoCodeProvider.notifier).state = null;
+    ref.read(selectedLoadingLookupIdProvider.notifier).state = null;
+    ref.read(labourOptionProvider.notifier).state = null;
+    ref.read(bookingCancelledProvider.notifier).state = true;
     state = HomeState.idle;
   }
 
@@ -561,6 +810,12 @@ class HomeNotifier extends Notifier<HomeState> {
     ref.read(driverToPickupRouteProvider.notifier).state = [];
     ref.read(pickupToDropRouteProvider.notifier).state = [];
     ref.read(tripEventProvider.notifier).state = TripEvent.none;
+    ref.read(selectedVehicleProvider.notifier).state = null;
+    ref.read(selectedVehicleTypeIdProvider.notifier).state = 1300;
+    ref.read(selectedCargoLookupIdProvider.notifier).state = null;
+    ref.read(selectedCargoCodeProvider.notifier).state = null;
+    ref.read(selectedLoadingLookupIdProvider.notifier).state = null;
+    ref.read(labourOptionProvider.notifier).state = null;
     ref.read(bookingCancelledProvider.notifier).state = true;
     state = HomeState.idle;
   }

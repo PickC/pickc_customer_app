@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:go_router/go_router.dart';
 import 'package:geolocator/geolocator.dart';
+
 import 'package:dio/dio.dart';
 
 import '../../../core/constants/api_constants.dart';
@@ -11,7 +12,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../providers/home_provider.dart';
 import '../../providers/auth_provider.dart';
-import '../../providers/providers.dart';
+import 'booking_form_widget.dart';
 import 'booking_stepper_sheet.dart';
 import 'driver_details_widget.dart';
 
@@ -26,22 +27,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   GoogleMapController? _mapController;
   LatLng _currentLocation = const LatLng(17.3850, 78.4867);
   LatLng? _mapCenter;
-
-  // Uber-style location selection state
-  bool _pickupLocked = false; // false = selecting pickup, true = selecting drop
   bool _isReverseGeocoding = false;
-  String _currentAddress = '';
+  bool _isProgrammaticMove = false; // suppress geocode when map pans from input
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(homeNotifierProvider.notifier).startPolling();
-      _initLocation();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final notifier = ref.read(homeNotifierProvider.notifier);
+      // If a booking was in progress before the app closed, restore it.
+      // Skip the normal GPS init in that case — we already have coordinates.
+      final restored = await notifier.restoreActiveBookingIfAny();
+      if (!restored) {
+        notifier.startPolling();
+        _initLocation();
+      }
     });
   }
 
   Future<void> _initLocation() async {
+    // Always start with pickup field active — source.png pin shows by default
+    ref.read(activeLocationFieldProvider.notifier).state = true;
+    // Clear any stale addresses from a previous session
+    ref.read(pickupAddressProvider.notifier).state = '';
+    ref.read(dropAddressProvider.notifier).state = '';
+    ref.read(pickupLatLngProvider.notifier).state = null;
+    ref.read(dropLatLngProvider.notifier).state = null;
     try {
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
@@ -58,33 +69,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           _currentLocation = latLng;
           _mapCenter = latLng;
         });
-        _mapController?.animateCamera(
-          CameraUpdate.newLatLngZoom(latLng, 15),
-        );
-        _reverseGeocode(latLng);
+        _isProgrammaticMove = true;
+        _mapController?.animateCamera(CameraUpdate.newLatLngZoom(latLng, 15));
+        // Auto-fill pickup with current GPS location.
+        // Keep activeLocationFieldProvider = true (source.png pin stays)
+        // so the user sees the green pickup pin by default.
+        // It switches to destination.png only when the user locks pickup.
+        await _reverseGeocode(latLng);
       }
     } catch (_) {}
   }
 
   void _onCameraMove(CameraPosition pos) {
-    if (!mounted) return;
-    // Only update center, no setState to avoid flicker
     _mapCenter = pos.target;
   }
 
   Future<void> _onCameraIdle() async {
-    if (!mounted) return;
+    // Skip if the camera moved because user selected from input box
+    if (_isProgrammaticMove) {
+      _isProgrammaticMove = false;
+      return;
+    }
     final center = _mapCenter;
     if (center == null) return;
-    final homeState = ref.read(homeNotifierProvider);
-    if (homeState != HomeState.idle) return;
-
-    if (!_pickupLocked) {
-      ref.read(pickupLatLngProvider.notifier).state = center;
-    } else {
-      ref.read(dropLatLngProvider.notifier).state = center;
-    }
-    _reverseGeocode(center);
+    if (ref.read(homeNotifierProvider) != HomeState.idle) return;
+    await _reverseGeocode(center);
   }
 
   Future<void> _reverseGeocode(LatLng pos) async {
@@ -101,87 +110,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         },
       );
       final results = (response.data['results'] as List?) ?? [];
-      if (results.isNotEmpty && mounted) {
-        final address = results[0]['formatted_address'] as String? ?? '';
-        setState(() => _currentAddress = address);
-        if (!_pickupLocked) {
-          ref.read(pickupAddressProvider.notifier).state = address;
-        } else {
-          ref.read(dropAddressProvider.notifier).state = address;
-        }
+      if (results.isEmpty || !mounted) return;
+      final address = results[0]['formatted_address'] as String? ?? '';
+      // Write to whichever field is currently active
+      final isPickup = ref.read(activeLocationFieldProvider);
+      if (isPickup) {
+        ref.read(pickupAddressProvider.notifier).state = address;
+        ref.read(pickupLatLngProvider.notifier).state = pos;
+      } else {
+        ref.read(dropAddressProvider.notifier).state = address;
+        ref.read(dropLatLngProvider.notifier).state = pos;
       }
     } catch (_) {
     } finally {
       _isReverseGeocoding = false;
-    }
-  }
-
-  // ── Lock pickup location ─────────────────────────────────────────────────
-  void _lockPickup() {
-    final pickup = ref.read(pickupLatLngProvider);
-    if (pickup == null) return;
-    setState(() {
-      _pickupLocked = true;
-      _currentAddress = '';
-    });
-    // Pan slightly to leave room, reset for drop selection
-    _mapController?.animateCamera(CameraUpdate.newLatLngZoom(pickup, 14));
-  }
-
-  // ── Confirm drop location → go to truck selection ─────────────────────────
-  Future<void> _confirmDrop() async {
-    final pickup = ref.read(pickupLatLngProvider);
-    final drop = ref.read(dropLatLngProvider);
-    if (pickup == null || drop == null) return;
-
-    // Fit both markers on screen
-    _fitMapToMarkers();
-
-    // Fetch nearby vehicles within 5km of pickup
-    await _fetchNearbyVehicles(pickup);
-
-    // Move to truck selection
-    final pickupAddr = ref.read(pickupAddressProvider);
-    final dropAddr = ref.read(dropAddressProvider);
-    ref.read(homeNotifierProvider.notifier).onLocationsSet(
-      pickupAddress: pickupAddr,
-      dropAddress: dropAddr,
-    );
-
-    setState(() => _pickupLocked = false); // reset for next booking
-  }
-
-  Future<void> _fetchNearbyVehicles(LatLng pickup) async {
-    try {
-      final dio = ref.read(dioClientProvider).dio;
-      final response = await dio.get(
-        ApiConstants.nearbyBookings,
-        queryParameters: {
-          'lat': pickup.latitude,
-          'lng': pickup.longitude,
-          'range': 5,
-        },
-      );
-      final list = (response.data as List?) ?? [];
-      final truckIcon = ref.read(truckMarkerIconProvider).valueOrNull;
-      final markers = <Marker>{};
-      for (int i = 0; i < list.length; i++) {
-        final b = list[i] as Map<String, dynamic>;
-        final lat = (b['latitude'] as num?)?.toDouble();
-        final lng = (b['longitude'] as num?)?.toDouble();
-        if (lat == null || lng == null) continue;
-        markers.add(Marker(
-          markerId: MarkerId('nearby_$i'),
-          position: LatLng(lat, lng),
-          icon: truckIcon ??
-              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
-          infoWindow: InfoWindow(title: 'Available Truck'),
-          flat: true,
-        ));
-      }
-      ref.read(nearbyVehicleMarkersProvider.notifier).state = markers;
-    } catch (_) {
-      // Non-fatal — no nearby vehicles shown
     }
   }
 
@@ -203,14 +145,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           _showTripCompletedDialog(context);
         });
       }
+      if (next == HomeState.waitingForDriver) {
+        // Fit map so both pickup + drop markers are visible
+        Future.delayed(const Duration(milliseconds: 800), _fitMapToMarkers);
+      }
       if (next == HomeState.bookingConfirmed) {
         Future.delayed(const Duration(milliseconds: 600), _fitMapToMarkers);
       }
     });
 
-    // Pan camera when pickup location is geocoded
+    // Pan camera when pickup location is set from input box
     ref.listen<LatLng?>(pickupLatLngProvider, (prev, pickup) {
-      if (pickup == null) return;
+      if (pickup == null || pickup == prev) return;
+      _isProgrammaticMove = true;
       final drop = ref.read(dropLatLngProvider);
       if (drop != null) {
         Future.delayed(const Duration(milliseconds: 300), _fitMapToMarkers);
@@ -219,9 +166,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       }
     });
 
-    // Pan camera when drop location is geocoded
+    // Pan camera when drop location is set from input box
     ref.listen<LatLng?>(dropLatLngProvider, (prev, drop) {
-      if (drop == null) return;
+      if (drop == null || drop == prev) return;
+      _isProgrammaticMove = true;
       final pickup = ref.read(pickupLatLngProvider);
       if (pickup != null) {
         Future.delayed(const Duration(milliseconds: 300), _fitMapToMarkers);
@@ -286,6 +234,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       }
     });
 
+    ref.listen<String?>(bookingErrorProvider, (prev, error) {
+      if (error == null) return;
+      ref.read(bookingErrorProvider.notifier).state = null;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(12),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    });
+
     ref.listen<bool>(bookingCancelledProvider, (prev, cancelled) {
       if (!cancelled) return;
       ref.read(bookingCancelledProvider.notifier).state = false;
@@ -302,7 +265,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         homeState == HomeState.bookingConfirmed ||
         homeState == HomeState.tripActive;
 
-    return Scaffold(
+    return PopScope(
+      // Prevent accidental app exit while booking is in progress
+      canPop: homeState != HomeState.waitingForDriver,
+      onPopInvokedWithResult: (bool didPop, Object? result) {
+        if (!didPop && homeState == HomeState.waitingForDriver) {
+          _showAppCloseWarningDialog(context);
+        }
+      },
+      child: Scaffold(
       backgroundColor: AppColors.backgroundDark,
       drawer: _buildDrawer(context),
       appBar: AppBar(
@@ -344,40 +315,47 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             onCameraIdle: _onCameraIdle,
           ),
 
-          // ── Center pin — only shown in idle (location selection) mode ──
-          if (homeState == HomeState.idle)
-            IgnorePointer(
+          // ── Uber-style center pin ──
+          // Always in the Stack so BookingFormWidget below stays at a fixed index.
+          // Invisible outside idle to avoid interfering with other states.
+          IgnorePointer(
+            child: Visibility(
+              visible: homeState == HomeState.idle,
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
               child: Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Image.asset(
-                      _pickupLocked
-                          ? 'assets/images/destination2.png'
-                          : 'assets/images/source2.png',
+                      ref.watch(activeLocationFieldProvider)
+                          ? 'assets/images/source.png'
+                          : 'assets/images/destination.png',
                       width: 48,
                       height: 48,
                     ),
-                    // Offset so pin tip sits exactly at center
                     const SizedBox(height: 48),
                   ],
                 ),
               ),
             ),
+          ),
 
-          // ── Bottom address + lock/confirm bar ──
-          if (homeState == HomeState.idle)
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: _LocationBar(
-                address: _currentAddress,
-                isPickupLocked: _pickupLocked,
-                onLockPickup: _lockPickup,
-                onConfirmDrop: _confirmDrop,
-              ),
+          // ── Pickup / Drop input boxes overlaid at top of map ──
+          // Always in the Stack (maintainState) so _pickupCtrl / _dropCtrl text
+          // and locked state survive the idle → selectingTrucks transition.
+          Positioned(
+            top: 12,
+            left: 12,
+            right: 12,
+            child: Visibility(
+              visible: homeState == HomeState.idle ||
+                  homeState == HomeState.selectingTrucks,
+              maintainState: true,
+              child: const BookingFormWidget(key: ValueKey('booking_form')),
             ),
+          ),
 
           // 3-step booking stepper — shown in selectingTrucks state
           if (homeState == HomeState.selectingTrucks)
@@ -391,13 +369,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   BookingStepperSheet(scrollController: scrollController),
             ),
 
-          // Driver details / waiting panel — fixed at bottom
+          // Driver details / waiting panel — fixed at bottom.
+          // SafeArea(top: false) pushes content above the system nav bar.
           if (showDriverPanel)
             Positioned(
               left: 0,
               right: 0,
               bottom: 0,
-              child: const DriverDetailsWidget(key: ValueKey('driver')),
+              child: SafeArea(
+                top: false,
+                left: false,
+                right: false,
+                child: const DriverDetailsWidget(key: ValueKey('driver')),
+              ),
             ),
 
           // My location button
@@ -406,6 +390,68 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     homeState == HomeState.selectingTrucks ? 180 : 16,
             right: 12,
             child: _myLocationButton(),
+          ),
+        ],
+      ),
+      ), // closes PopScope child (Scaffold)
+    ); // closes PopScope
+  }
+
+// ── App-close warning dialog ──────────────────────────────────────────────
+
+  void _showAppCloseWarningDialog(BuildContext context) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.backgroundDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AppColors.accentYellow, width: 1),
+        ),
+        title: Text(
+          'Cancel Booking?',
+          style: AppTextStyles.titleLarge
+              .copyWith(color: AppColors.accentYellow),
+          textAlign: TextAlign.center,
+        ),
+        content: Text(
+          'Your booking is active and waiting for a truck.\n\n'
+          'If you go back now, the booking will be cancelled.',
+          style: AppTextStyles.bodyMedium
+              .copyWith(color: AppColors.textHint),
+          textAlign: TextAlign.center,
+        ),
+        actionsAlignment: MainAxisAlignment.spaceEvenly,
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.accentYellow,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 20, vertical: 12),
+            ),
+            child: const Text('No, Stay',
+                style: TextStyle(fontWeight: FontWeight.w600)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              await ref
+                  .read(homeNotifierProvider.notifier)
+                  .deleteBookingOnExit();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.statusCancelled,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 20, vertical: 12),
+            ),
+            child: const Text('Yes, Cancel',
+                style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -629,8 +675,43 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 () => context.push(RouteNames.query)),
             const Spacer(),
             _drawerItem(context, Icons.logout, 'Logout', () async {
-              await ref.read(authNotifierProvider.notifier).logout();
-              if (context.mounted) context.go(RouteNames.login);
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: AppColors.backgroundDark,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: const BorderSide(color: AppColors.accentYellow, width: 1),
+                  ),
+                  title: const Text(
+                    'Log Out',
+                    style: TextStyle(color: AppColors.accentYellow, fontWeight: FontWeight.bold),
+                  ),
+                  content: const Text(
+                    'Are you sure you want to log out?',
+                    style: TextStyle(color: AppColors.textLight),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      child: const Text('Cancel', style: TextStyle(color: AppColors.textHint)),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.accentYellow,
+                        foregroundColor: AppColors.backgroundDark,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      child: const Text('Log Out', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed == true && context.mounted) {
+                await ref.read(authNotifierProvider.notifier).logout();
+                if (context.mounted) context.go(RouteNames.login);
+              }
             }),
             const SizedBox(height: 8),
           ],
@@ -652,109 +733,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         Navigator.of(context).pop();
         onTap();
       },
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Location bar — address + lock/confirm button at bottom
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _LocationBar extends StatelessWidget {
-  final String address;
-  final bool isPickupLocked;
-  final VoidCallback onLockPickup;
-  final VoidCallback onConfirmDrop;
-
-  const _LocationBar({
-    required this.address,
-    required this.isPickupLocked,
-    required this.onLockPickup,
-    required this.onConfirmDrop,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.backgroundDark,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-        boxShadow: [BoxShadow(color: Colors.black45, blurRadius: 10, offset: Offset(0, -2))],
-      ),
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-      child: Row(
-        children: [
-          Image.asset(
-            isPickupLocked
-                ? 'assets/images/destination2.png'
-                : 'assets/images/source2.png',
-            width: 28,
-            height: 28,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  isPickupLocked ? 'Drop Location' : 'Pickup Location',
-                  style: const TextStyle(
-                    color: AppColors.textHint,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  address.isEmpty ? 'Move map to set location...' : address,
-                  style: TextStyle(
-                    color: address.isEmpty ? AppColors.textHint : AppColors.textLight,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          GestureDetector(
-            onTap: address.isEmpty
-                ? null
-                : isPickupLocked
-                    ? onConfirmDrop
-                    : onLockPickup,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                color: address.isEmpty ? AppColors.textHint : AppColors.accentYellow,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    isPickupLocked ? Icons.check : Icons.lock,
-                    color: AppColors.backgroundDark,
-                    size: 16,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    isPickupLocked ? 'Confirm' : 'Set Pickup',
-                    style: const TextStyle(
-                      color: AppColors.backgroundDark,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

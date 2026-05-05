@@ -53,9 +53,13 @@ class _BookingStepperSheetState extends ConsumerState<BookingStepperSheet>
         _snack('Please select a vehicle type');
         return;
       }
+      if (ref.read(labourOptionProvider) == null) {
+        _snack('Please select a labour option (None / Loading / Unloading / Both)');
+        return;
+      }
     }
     if (_step == 1) {
-      if (ref.read(cargoTypeProvider) == null) {
+      if (ref.read(selectedCargoLookupIdProvider) == null) {
         _snack('Please select a cargo type');
         return;
       }
@@ -164,7 +168,11 @@ class _BookingStepperSheetState extends ConsumerState<BookingStepperSheet>
       decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: Color(0xFF2A2200), width: 1)),
       ),
-      child: Row(
+      child: SafeArea(
+        top: false,
+        left: false,
+        right: false,
+        child: Row(
         children: [
           // BACK or BOOK LATER
           Expanded(
@@ -205,8 +213,9 @@ class _BookingStepperSheetState extends ConsumerState<BookingStepperSheet>
             ),
           ),
         ],
-      ),
-    );
+        ), // closes Row
+      ), // closes SafeArea
+    ); // closes Container
   }
 
   Future<void> _onBookLater() async {
@@ -435,17 +444,24 @@ class _VehicleTile extends ConsumerWidget {
                 _ToggleBtn(
                   label: 'OPEN',
                   active: isOpen,
-                  onTap: () => ref
-                      .read(_bodyOpenProvider(vehicle.id as int).notifier)
-                      .state = true,
+                  onTap: () {
+                    ref.read(_bodyOpenProvider(vehicle.id as int).notifier).state = true;
+                    // Only update the booking vehicleType if this tile is selected
+                    if (isSelected) {
+                      ref.read(selectedVehicleTypeIdProvider.notifier).state = 1300;
+                    }
+                  },
                 ),
                 const SizedBox(height: 4),
                 _ToggleBtn(
                   label: 'CLOSE',
                   active: !isOpen,
-                  onTap: () => ref
-                      .read(_bodyOpenProvider(vehicle.id as int).notifier)
-                      .state = false,
+                  onTap: () {
+                    ref.read(_bodyOpenProvider(vehicle.id as int).notifier).state = false;
+                    if (isSelected) {
+                      ref.read(selectedVehicleTypeIdProvider.notifier).state = 1301;
+                    }
+                  },
                 ),
               ],
             ),
@@ -514,20 +530,23 @@ String _imageFor(String name, bool isOpen) {
 // Step 2 — Cargo type + weight
 // ─────────────────────────────────────────────────────────────────────────────
 
+IconData _iconForCargo(String code) {
+  final c = code.toLowerCase();
+  if (c.contains('industrial') || c.contains('goods')) return Icons.settings_outlined;
+  if (c.contains('vegetable') || c.contains('fruit')) return Icons.eco_outlined;
+  if (c.contains('household') || c.contains('home')) return Icons.home_outlined;
+  if (c.contains('fragile') || c.contains('glass') || c.contains('wine')) return Icons.wine_bar_outlined;
+  return Icons.inventory_2_outlined;
+}
+
 class _Step2Cargo extends ConsumerWidget {
   final TextEditingController weightCtrl;
   const _Step2Cargo({required this.weightCtrl});
 
-  static const _cargoMeta = {
-    CargoType.industrial: (icon: Icons.settings_outlined, label: 'Industrial Goods'),
-    CargoType.vegetables: (icon: Icons.eco_outlined, label: 'Vegetables & Fruits'),
-    CargoType.household: (icon: Icons.home_outlined, label: 'Household Items'),
-    CargoType.fragile: (icon: Icons.wine_bar_outlined, label: 'Fragile Goods'),
-  };
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final selected = ref.watch(cargoTypeProvider);
+    final cargoAsync   = ref.watch(cargoTypesProvider);
+    final selectedId   = ref.watch(selectedCargoLookupIdProvider);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -539,64 +558,74 @@ class _Step2Cargo extends ConsumerWidget {
                   .copyWith(color: AppColors.textHint, fontSize: 13)),
           const SizedBox(height: 12),
 
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: 2.6,
-            children: CargoType.values.map((type) {
-              final meta = _cargoMeta[type]!;
-              final isSelected = selected == type;
-              return GestureDetector(
-                onTap: () =>
-                    ref.read(cargoTypeProvider.notifier).state = type,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? AppColors.accentYellow.withValues(alpha: 0.12)
-                        : AppColors.backgroundDark,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
+          cargoAsync.when(
+            loading: () => const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: CircularProgressIndicator(color: AppColors.accentYellow),
+              ),
+            ),
+            error: (_, _) => const Text('Could not load cargo types',
+                style: TextStyle(color: AppColors.textHint)),
+            data: (items) => GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              childAspectRatio: 2.6,
+              children: items.map((item) {
+                final isSelected = selectedId == item.id;
+                return GestureDetector(
+                  onTap: () {
+                    ref.read(selectedCargoLookupIdProvider.notifier).state = item.id;
+                    ref.read(selectedCargoCodeProvider.notifier).state = item.code;
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
                       color: isSelected
-                          ? AppColors.accentYellow
-                          : AppColors.textHint.withValues(alpha: 0.35),
-                      width: isSelected ? 1.5 : 0.8,
+                          ? AppColors.accentYellow.withValues(alpha: 0.12)
+                          : AppColors.backgroundDark,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSelected
+                            ? AppColors.accentYellow
+                            : AppColors.textHint.withValues(alpha: 0.35),
+                        width: isSelected ? 1.5 : 0.8,
+                      ),
                     ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(meta.icon,
-                          color: isSelected
-                              ? AppColors.accentYellow
-                              : AppColors.textHint,
-                          size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          meta.label,
-                          style: TextStyle(
+                    child: Row(
+                      children: [
+                        Icon(_iconForCargo(item.code),
                             color: isSelected
                                 ? AppColors.accentYellow
-                                : AppColors.textLight,
-                            fontSize: 12,
-                            fontWeight: isSelected
-                                ? FontWeight.w600
-                                : FontWeight.normal,
+                                : AppColors.textHint,
+                            size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            item.description ?? item.code,
+                            style: TextStyle(
+                              color: isSelected
+                                  ? AppColors.accentYellow
+                                  : AppColors.textLight,
+                              fontSize: 12,
+                              fontWeight: isSelected
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
-              );
-            }).toList(),
+                );
+              }).toList(),
+            ),
           ),
 
           const SizedBox(height: 20),

@@ -15,6 +15,7 @@ class ApiConstants {
   static const String updatePassword     = 'master/customers/password';
 
   // ── Lookups ─────────────────────────────────────────────────────────────────
+  static const String vehicleGroupList   = 'master/customer/vehicleGroupList'; // legacy endpoint (old app)
   static const String getVehicleGroups   = 'master/lookups/vehicle-groups';
   static const String getVehicleTypes    = 'master/lookups/vehicle-types';
   static const String getCargoTypes      = 'master/lookups/cargo-types';
@@ -29,6 +30,7 @@ class ApiConstants {
   static const String getBooking         = 'booking/bookings/{bookingNo}';
   static const String customerBookings   = 'booking/bookings/customer/{customerId}';
   static const String cancelBooking      = 'booking/bookings/cancel';
+  static const String deleteBooking      = 'booking/bookings/{bookingNo}'; // DELETE — used on app-exit cancel
   static const String confirmBooking     = 'booking/bookings/confirm';        // driver confirms
   static const String reachPickup        = 'booking/bookings/{bookingNo}/reach-pickup';
   static const String reachDestination   = 'booking/bookings/{bookingNo}/reach-destination';

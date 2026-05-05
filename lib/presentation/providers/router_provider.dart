@@ -29,6 +29,8 @@ import '../screens/utility/rate_card_screen.dart';
 import '../screens/utility/referral_screen.dart';
 import '../screens/utility/zoom_image_screen.dart';
 import '../screens/booking/trip_info_screen.dart';
+import '../screens/booking/booking_detail_screen.dart';
+import '../../data/models/booking/booking_model.dart';
 import '../screens/payment/razorpay_payment_screen.dart';
 import '../screens/tracking/driver_tracking_screen.dart';
 import 'providers.dart';
@@ -185,6 +187,13 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) {
           final extra = (state.extra as Map<String, dynamic>?) ?? {};
           return TripInfoScreen(tripData: extra);
+        },
+      ),
+      GoRoute(
+        path: RouteNames.bookingDetail,
+        builder: (context, state) {
+          final booking = state.extra as BookingModel;
+          return BookingDetailScreen(booking: booking);
         },
       ),
       GoRoute(

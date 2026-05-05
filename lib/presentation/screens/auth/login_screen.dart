@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -22,12 +24,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _mobileCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _obscurePassword = true;
+  String? _errorMessage;
+  Timer? _errorTimer;
 
   @override
   void dispose() {
     _mobileCtrl.dispose();
     _passwordCtrl.dispose();
+    _errorTimer?.cancel();
     super.dispose();
+  }
+
+  void _showError(String message) {
+    _errorTimer?.cancel();
+    setState(() => _errorMessage = message);
+    _errorTimer = Timer(const Duration(seconds: 4), () {
+      if (mounted) setState(() => _errorMessage = null);
+    });
   }
 
   Future<void> _onLogin() async {
@@ -43,14 +56,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       data: (user) {
         if (user != null) context.go(RouteNames.home);
       },
-      error: (e, _) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.toString()),
-            backgroundColor: AppColors.statusCancelled,
-          ),
-        );
-      },
+      error: (e, _) => _showError(e.toString()),
     );
   }
 
@@ -157,6 +163,43 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                   ],
                 ),
+
+                // Error card — auto-dismisses after 4 seconds
+                if (_errorMessage != null) ...[
+                  const SizedBox(height: 24),
+                  AnimatedOpacity(
+                    opacity: 1.0,
+                    duration: const Duration(milliseconds: 300),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF3A0000),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppColors.statusCancelled.withValues(alpha: 0.6)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.error_outline, color: AppColors.statusCancelled, size: 22),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              _errorMessage!,
+                              style: AppTextStyles.bodySmall.copyWith(
+                                color: const Color(0xFFFF6B6B),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                          GestureDetector(
+                            onTap: () => setState(() => _errorMessage = null),
+                            child: const Icon(Icons.close, color: AppColors.statusCancelled, size: 18),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

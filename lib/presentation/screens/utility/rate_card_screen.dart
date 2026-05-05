@@ -19,8 +19,24 @@ class _RateCardScreenState extends State<RateCardScreen> {
     super.initState();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setUserAgent(
+        'Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+      )
       ..setNavigationDelegate(NavigationDelegate(
-        onPageFinished: (_) => setState(() => _isLoading = false),
+        onPageFinished: (_) {
+          // Inject responsive viewport meta tag so page scales to mobile width
+          _controller.runJavaScript(
+            "var meta = document.querySelector('meta[name=viewport]');"
+            "if (!meta) {"
+            "  meta = document.createElement('meta');"
+            "  meta.name = 'viewport';"
+            "  document.head.appendChild(meta);"
+            "}"
+            "meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0';",
+          );
+          setState(() => _isLoading = false);
+        },
       ))
       ..loadRequest(Uri.parse(AppConstants.rateCardUrl));
   }
@@ -30,13 +46,17 @@ class _RateCardScreenState extends State<RateCardScreen> {
     return Scaffold(
       backgroundColor: AppColors.backgroundDark,
       appBar: AppBar(
-        title: const Text('Rate Card'),
         backgroundColor: AppColors.backgroundDark,
+        title: const Text('Rate Card'),
+        foregroundColor: AppColors.accentYellow,
       ),
       body: Stack(
         children: [
           WebViewWidget(controller: _controller),
-          if (_isLoading) const Center(child: CircularProgressIndicator()),
+          if (_isLoading)
+            const Center(
+              child: CircularProgressIndicator(color: AppColors.accentYellow),
+            ),
         ],
       ),
     );

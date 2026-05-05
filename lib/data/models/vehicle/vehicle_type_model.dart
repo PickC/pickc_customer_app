@@ -14,11 +14,25 @@ class VehicleTypeModel {
   });
 
   factory VehicleTypeModel.fromJson(Map<String, dynamic> json) {
+    // Support both new API (id/name) and old API (LookupID/LookupId/lookupID variants)
+    final id = (json['id'] as num?)?.toInt()
+        ?? (json['lookupID'] as num?)?.toInt()   // old API uppercase ID
+        ?? (json['LookupID'] as num?)?.toInt()
+        ?? (json['LookupId'] as num?)?.toInt()
+        ?? (json['lookupId'] as num?)?.toInt()
+        ?? 0;
+    final name = json['name']?.toString()
+        ?? json['LookupCode']?.toString()
+        ?? json['lookupCode']?.toString()
+        ?? '';
+    final description = json['description']?.toString()
+        ?? json['LookupDescription']?.toString()
+        ?? json['lookupDescription']?.toString();
     return VehicleTypeModel(
-      id: (json['id'] as num?)?.toInt() ?? 0,
-      name: json['name']?.toString() ?? '',
-      description: json['description']?.toString(),
-      imageUrl: json['imageUrl']?.toString(),
+      id: id,
+      name: name,
+      description: description,
+      imageUrl: json['imageUrl']?.toString() ?? json['Image']?.toString(),
       groupId: (json['groupId'] as num?)?.toInt(),
     );
   }

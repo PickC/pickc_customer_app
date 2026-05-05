@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../providers/home_provider.dart';
+import '../../providers/vehicle_provider.dart';
 
 /// First card in the truck sheet — lets the customer choose whether
 /// they need labour help for loading / unloading.
@@ -54,45 +55,61 @@ class LoadingUnloadingCard extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 10),
-          Row(
-            children: [
-              _OptionChip(
-                label: 'None',
-                icon: Icons.do_not_disturb_alt_outlined,
-                isSelected: selected == LabourOption.none,
-                onTap: () => ref
-                    .read(labourOptionProvider.notifier)
-                    .state = LabourOption.none,
-              ),
-              const SizedBox(width: 6),
-              _OptionChip(
-                label: 'Loading',
-                icon: Icons.upload_outlined,
-                isSelected: selected == LabourOption.loading,
-                onTap: () => ref
-                    .read(labourOptionProvider.notifier)
-                    .state = LabourOption.loading,
-              ),
-              const SizedBox(width: 6),
-              _OptionChip(
-                label: 'Unloading',
-                icon: Icons.download_outlined,
-                isSelected: selected == LabourOption.unloading,
-                onTap: () => ref
-                    .read(labourOptionProvider.notifier)
-                    .state = LabourOption.unloading,
-              ),
-              const SizedBox(width: 6),
-              _OptionChip(
-                label: 'Both',
-                icon: Icons.swap_vert,
-                isSelected: selected == LabourOption.both,
-                onTap: () => ref
-                    .read(labourOptionProvider.notifier)
-                    .state = LabourOption.both,
-              ),
-            ],
-          ),
+          // Fetch loading types from API so the correct lookupID is sent in the booking payload.
+          // Falls back to hardcoded labels/indices if the API is unavailable.
+          Consumer(builder: (context, ref, _) {
+            final loadingAsync = ref.watch(loadingTypesProvider);
+            final items = loadingAsync.valueOrNull ?? const [];
+
+            // Map API items to LabourOption by matching the code name (case-insensitive)
+            LabourOption toLabour(String code) {
+              final c = code.toLowerCase();
+              if (c == 'both' || c == 'all') return LabourOption.both;
+              if (c.contains('load') && c.contains('un')) return LabourOption.both;
+              if (c.contains('unload')) return LabourOption.unloading;
+              if (c.contains('load')) return LabourOption.loading;
+              return LabourOption.none;
+            }
+
+            IconData iconFor(LabourOption opt) {
+              switch (opt) {
+                case LabourOption.none:      return Icons.do_not_disturb_alt_outlined;
+                case LabourOption.loading:   return Icons.upload_outlined;
+                case LabourOption.unloading: return Icons.download_outlined;
+                case LabourOption.both:      return Icons.swap_vert;
+              }
+            }
+
+            void select(int lookupId, LabourOption labour) {
+              ref.read(labourOptionProvider.notifier).state = labour;
+              ref.read(selectedLoadingLookupIdProvider.notifier).state = lookupId;
+            }
+
+            // If API returned items, use them; otherwise fall back to the four hardcoded options
+            final chips = items.isNotEmpty
+                ? items.map((item) {
+                    final labour = toLabour(item.code);
+                    return _OptionChip(
+                      label: item.code,
+                      icon: iconFor(labour),
+                      isSelected: selected == labour,
+                      onTap: () => select(item.id, labour),
+                    );
+                  }).toList()
+                : [
+                    _OptionChip(label: 'None',      icon: Icons.do_not_disturb_alt_outlined, isSelected: selected == LabourOption.none,      onTap: () => select(0, LabourOption.none)),
+                    _OptionChip(label: 'Loading',   icon: Icons.upload_outlined,             isSelected: selected == LabourOption.loading,   onTap: () => select(1, LabourOption.loading)),
+                    _OptionChip(label: 'Unloading', icon: Icons.download_outlined,           isSelected: selected == LabourOption.unloading, onTap: () => select(2, LabourOption.unloading)),
+                    _OptionChip(label: 'Both',      icon: Icons.swap_vert,                   isSelected: selected == LabourOption.both,      onTap: () => select(3, LabourOption.both)),
+                  ];
+
+            return Row(
+              children: chips
+                  .expand((chip) => [chip, const SizedBox(width: 6)])
+                  .toList()
+                ..removeLast(),
+            );
+          }),
         ],
       ),
     );

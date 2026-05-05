@@ -179,7 +179,7 @@ class DriverDetailsWidget extends ConsumerWidget {
     final homeState = ref.watch(homeNotifierProvider);
     final isWaiting = homeState == HomeState.waitingForDriver;
 
-    if (isWaiting) return _WaitingPanel(ref: ref);
+    if (isWaiting) return const _WaitingPanel();
 
     final driverAsync = ref.watch(currentDriverProvider);
     final otp = ref.watch(otpProvider);
@@ -369,69 +369,217 @@ class DriverDetailsWidget extends ConsumerWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Waiting for driver panel
+// Waiting for driver panel — Uber-style full card
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _WaitingPanel extends StatelessWidget {
-  final WidgetRef ref;
-  const _WaitingPanel({required this.ref});
+class _WaitingPanel extends ConsumerStatefulWidget {
+  const _WaitingPanel();
+
+  @override
+  ConsumerState<_WaitingPanel> createState() => _WaitingPanelState();
+}
+
+class _WaitingPanelState extends ConsumerState<_WaitingPanel>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final pickup   = ref.watch(pickupAddressProvider);
+    final drop     = ref.watch(dropAddressProvider);
+    final distKm   = ref.watch(routeDistanceKmProvider);
+
     return Container(
       decoration: const BoxDecoration(
         color: AppColors.backgroundDark,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         boxShadow: [
-          BoxShadow(
-              color: Colors.black45, blurRadius: 10, offset: Offset(0, -2)),
+          BoxShadow(color: Colors.black54, blurRadius: 14, offset: Offset(0, -3)),
         ],
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.5,
-              color: AppColors.accentYellow,
+          // ── Drag handle ──
+          const SizedBox(height: 10),
+          Container(
+            width: 36, height: 4,
+            decoration: BoxDecoration(
+              color: AppColors.textHint,
+              borderRadius: BorderRadius.circular(2),
             ),
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(height: 18),
+
+          // ── Animated truck icon + heading ──
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
               children: [
-                Text('Truck booked successfully!',
-                    style: AppTextStyles.titleMedium.copyWith(
-                        color: AppColors.accentYellow)),
-                Text('Waiting for driver confirmation...',
-                    style: AppTextStyles.bodySmall),
+                // Pulsing truck icon
+                FadeTransition(
+                  opacity: Tween<double>(begin: 0.4, end: 1.0).animate(
+                    CurvedAnimation(parent: _pulse, curve: Curves.easeInOut),
+                  ),
+                  child: Container(
+                    width: 52, height: 52,
+                    decoration: BoxDecoration(
+                      color: AppColors.accentYellow.withValues(alpha: 0.15),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: AppColors.accentYellow, width: 1.5),
+                    ),
+                    child: const Icon(Icons.local_shipping_outlined,
+                        color: AppColors.accentYellow, size: 28),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Finding nearby trucks...',
+                        style: AppTextStyles.titleMedium.copyWith(
+                            color: AppColors.accentYellow),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Truck booked successfully!',
+                        style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textHint),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
-          TextButton(
-            onPressed: () =>
-                ref.read(homeNotifierProvider.notifier).cancelBooking(),
-            style: TextButton.styleFrom(
-              foregroundColor: AppColors.statusCancelled,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-                side:
-                    const BorderSide(color: AppColors.statusCancelled),
+          const SizedBox(height: 16),
+
+          // ── Route summary ──
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A1A00),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF2A2200)),
+              ),
+              child: Column(
+                children: [
+                  _RouteRow(
+                    icon: 'assets/images/source.png',
+                    label: pickup.isNotEmpty ? pickup : 'Pickup location',
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 5),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 1, height: 18,
+                          color: AppColors.textHint.withValues(alpha: 0.4),
+                          margin: const EdgeInsets.only(left: 6),
+                        ),
+                        const SizedBox(width: 10),
+                        if (distKm != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.accentYellow.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                  color: AppColors.accentYellow.withValues(alpha: 0.4)),
+                            ),
+                            child: Text(
+                              '~${distKm.toStringAsFixed(1)} km',
+                              style: const TextStyle(
+                                color: AppColors.accentYellow,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  _RouteRow(
+                    icon: 'assets/images/destination.png',
+                    label: drop.isNotEmpty ? drop : 'Drop location',
+                  ),
+                ],
               ),
             ),
-            child: const Text('Cancel',
-                style: TextStyle(
-                    color: AppColors.statusCancelled,
-                    fontWeight: FontWeight.w600)),
           ),
+          const SizedBox(height: 16),
+
+          // ── Cancel button ──
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () =>
+                    ref.read(homeNotifierProvider.notifier).cancelBooking(),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.statusCancelled,
+                  side: const BorderSide(color: AppColors.statusCancelled),
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                ),
+                child: const Text(
+                  'Cancel Booking',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 14),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
         ],
       ),
+    );
+  }
+}
+
+class _RouteRow extends StatelessWidget {
+  final String icon;
+  final String label;
+  const _RouteRow({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Image.asset(icon, width: 22, height: 22),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(
+                color: AppColors.textLight, fontSize: 13),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 }

@@ -27,4 +27,5 @@ class RouteNames {
   static const String tripInfo = '/trip-info';
   static const String razorpayPayment = '/razorpay-payment';
   static const String driverTracking = '/driver-tracking';
+  static const String bookingDetail  = '/booking-detail';
 }
