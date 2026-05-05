@@ -6,14 +6,14 @@ import '../../../core/theme/app_text_styles.dart';
 import '../../providers/home_provider.dart';
 import '../../providers/vehicle_provider.dart';
 
-/// First card in the truck sheet — lets the customer choose whether
-/// they need labour help for loading / unloading.
 class LoadingUnloadingCard extends ConsumerWidget {
   const LoadingUnloadingCard({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final selected = ref.watch(labourOptionProvider);
+    final selectedLookupId = ref.watch(selectedLoadingLookupIdProvider);
+    final labour = ref.watch(labourOptionProvider);
+    final isOpen = ref.watch(selectedVehicleTypeIdProvider) == 1300;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -37,14 +37,14 @@ class LoadingUnloadingCard extends ConsumerWidget {
               ),
               const SizedBox(width: 8),
               Text(
-                'Do you need Labour?',
+                'Select helper for Loading/Unloading',
                 style: AppTextStyles.titleMedium.copyWith(
                   color: AppColors.textLight,
-                  fontSize: 14,
+                  fontSize: 13,
                 ),
               ),
               const Spacer(),
-              if (selected != LabourOption.none)
+              if (labour != null && labour != LabourOption.none)
                 Text(
                   '+ charges apply',
                   style: AppTextStyles.bodySmall.copyWith(
@@ -55,28 +55,61 @@ class LoadingUnloadingCard extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 10),
-          // Fetch loading types from API so the correct lookupID is sent in the booking payload.
-          // Falls back to hardcoded labels/indices if the API is unavailable.
+
           Consumer(builder: (context, ref, _) {
             final loadingAsync = ref.watch(loadingTypesProvider);
             final items = loadingAsync.valueOrNull ?? const [];
 
-            // Map API items to LabourOption by matching the code name (case-insensitive)
             LabourOption toLabour(String code) {
               final c = code.toLowerCase();
               if (c == 'both' || c == 'all') return LabourOption.both;
-              if (c.contains('load') && c.contains('un')) return LabourOption.both;
+              // Strip 'unload' then check if 'load' still remains → truly combined
+              if (c.contains('unload') &&
+                  c.replaceAll('unload', '').contains('load')) {
+                return LabourOption.both;
+              }
               if (c.contains('unload')) return LabourOption.unloading;
               if (c.contains('load')) return LabourOption.loading;
               return LabourOption.none;
             }
 
-            IconData iconFor(LabourOption opt) {
+            String normalizeLabel(String raw) => raw
+                .replaceAll(' And ', '/')
+                .replaceAll(' and ', '/')
+                .replaceAll(' AND ', '/');
+
+
+            // Returns an icon builder function so _OptionChip can tint it correctly
+            Widget Function(Color) iconBuilderFor(LabourOption opt) {
               switch (opt) {
-                case LabourOption.none:      return Icons.do_not_disturb_alt_outlined;
-                case LabourOption.loading:   return Icons.upload_outlined;
-                case LabourOption.unloading: return Icons.download_outlined;
-                case LabourOption.both:      return Icons.swap_vert;
+                case LabourOption.loading:
+                  final path = isOpen
+                      ? 'assets/helper/loading_open.png'
+                      : 'assets/helper/loading_closed.png';
+                  return (color) => Image.asset(
+                        path,
+                        width: 22,
+                        height: 22,
+                        errorBuilder: (_, _, _) =>
+                            Icon(Icons.upload_outlined, size: 16, color: color),
+                      );
+                case LabourOption.unloading:
+                  final path = isOpen
+                      ? 'assets/helper/unloading_open.png'
+                      : 'assets/helper/unloading_closed.png';
+                  return (color) => Image.asset(
+                        path,
+                        width: 22,
+                        height: 22,
+                        errorBuilder: (_, _, _) =>
+                            Icon(Icons.download_outlined, size: 16, color: color),
+                      );
+                case LabourOption.both:
+                  return (color) =>
+                      Icon(Icons.swap_vert, size: 16, color: color);
+                case LabourOption.none:
+                  return (color) =>
+                      Icon(Icons.do_not_disturb_alt_outlined, size: 16, color: color);
               }
             }
 
@@ -85,22 +118,41 @@ class LoadingUnloadingCard extends ConsumerWidget {
               ref.read(selectedLoadingLookupIdProvider.notifier).state = lookupId;
             }
 
-            // If API returned items, use them; otherwise fall back to the four hardcoded options
             final chips = items.isNotEmpty
                 ? items.map((item) {
                     final labour = toLabour(item.code);
                     return _OptionChip(
-                      label: item.code,
-                      icon: iconFor(labour),
-                      isSelected: selected == labour,
+                      label: normalizeLabel(item.description ?? item.code),
+                      iconBuilder: iconBuilderFor(labour),
+                      isSelected: selectedLookupId == item.id,
                       onTap: () => select(item.id, labour),
                     );
                   }).toList()
                 : [
-                    _OptionChip(label: 'None',      icon: Icons.do_not_disturb_alt_outlined, isSelected: selected == LabourOption.none,      onTap: () => select(0, LabourOption.none)),
-                    _OptionChip(label: 'Loading',   icon: Icons.upload_outlined,             isSelected: selected == LabourOption.loading,   onTap: () => select(1, LabourOption.loading)),
-                    _OptionChip(label: 'Unloading', icon: Icons.download_outlined,           isSelected: selected == LabourOption.unloading, onTap: () => select(2, LabourOption.unloading)),
-                    _OptionChip(label: 'Both',      icon: Icons.swap_vert,                   isSelected: selected == LabourOption.both,      onTap: () => select(3, LabourOption.both)),
+                    _OptionChip(
+                      label: 'None',
+                      iconBuilder: iconBuilderFor(LabourOption.none),
+                      isSelected: selectedLookupId == 0,
+                      onTap: () => select(0, LabourOption.none),
+                    ),
+                    _OptionChip(
+                      label: 'Load',
+                      iconBuilder: iconBuilderFor(LabourOption.loading),
+                      isSelected: selectedLookupId == 1,
+                      onTap: () => select(1, LabourOption.loading),
+                    ),
+                    _OptionChip(
+                      label: 'Unload',
+                      iconBuilder: iconBuilderFor(LabourOption.unloading),
+                      isSelected: selectedLookupId == 2,
+                      onTap: () => select(2, LabourOption.unloading),
+                    ),
+                    _OptionChip(
+                      label: 'All',
+                      iconBuilder: iconBuilderFor(LabourOption.both),
+                      isSelected: selectedLookupId == 3,
+                      onTap: () => select(3, LabourOption.both),
+                    ),
                   ];
 
             return Row(
@@ -114,23 +166,30 @@ class LoadingUnloadingCard extends ConsumerWidget {
       ),
     );
   }
+
+
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _OptionChip extends StatelessWidget {
   final String label;
-  final IconData icon;
+  final Widget Function(Color iconColor) iconBuilder;
   final bool isSelected;
   final VoidCallback onTap;
 
   const _OptionChip({
     required this.label,
-    required this.icon,
+    required this.iconBuilder,
     required this.isSelected,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final iconColor =
+        isSelected ? AppColors.backgroundDark : AppColors.textHint;
+
     return Expanded(
       child: GestureDetector(
         onTap: onTap,
@@ -138,9 +197,7 @@ class _OptionChip extends StatelessWidget {
           duration: const Duration(milliseconds: 150),
           padding: const EdgeInsets.symmetric(vertical: 7),
           decoration: BoxDecoration(
-            color: isSelected
-                ? AppColors.accentYellow
-                : AppColors.backgroundDark,
+            color: isSelected ? AppColors.accentYellow : AppColors.backgroundDark,
             borderRadius: BorderRadius.circular(6),
             border: Border.all(
               color: isSelected
@@ -152,13 +209,7 @@ class _OptionChip extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                icon,
-                size: 16,
-                color: isSelected
-                    ? AppColors.backgroundDark
-                    : AppColors.textHint,
-              ),
+              iconBuilder(iconColor),
               const SizedBox(height: 3),
               Text(
                 label,

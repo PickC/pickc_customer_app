@@ -57,17 +57,21 @@ class _BookingFormWidgetState extends ConsumerState<BookingFormWidget> {
 
   void _onPickupLockTap() {
     if (_pickupLocked) {
-      // Unlock — allow editing again
+      // Unlock — reset both locations and go back to idle map view
       setState(() {
         _pickupLocked = false;
-        _dropLocked = false; // also unlock drop since flow resets
+        _dropLocked = false;
       });
       ref.read(pickupAddressProvider.notifier).state = '';
       ref.read(pickupLatLngProvider.notifier).state = null;
       ref.read(dropAddressProvider.notifier).state = '';
       ref.read(dropLatLngProvider.notifier).state = null;
       _dropCtrl.clear();
+      _pickupCtrl.clear();
       ref.read(activeLocationFieldProvider.notifier).state = true;
+      ref.read(homeNotifierProvider.notifier).goToIdle();
+      // Signal map to pan back to current GPS location
+      ref.read(panToMyLocationProvider.notifier).state++;
       _pickupFocus.requestFocus();
     } else {
       if (_pickupCtrl.text.trim().isEmpty) return;
@@ -80,12 +84,15 @@ class _BookingFormWidgetState extends ConsumerState<BookingFormWidget> {
 
   void _onDropLockTap() {
     if (_dropLocked) {
-      // Unlock — allow editing drop again
+      // Unlock drop — go back to idle so vehicle sheet disappears
       setState(() => _dropLocked = false);
       ref.read(dropAddressProvider.notifier).state = '';
       ref.read(dropLatLngProvider.notifier).state = null;
       _dropCtrl.clear();
       ref.read(activeLocationFieldProvider.notifier).state = false;
+      ref.read(homeNotifierProvider.notifier).goToIdle();
+      // Signal map to pan back to current GPS location
+      ref.read(panToMyLocationProvider.notifier).state++;
       _dropFocus.requestFocus();
     } else {
       if (_dropCtrl.text.trim().isEmpty) return;

@@ -93,6 +93,7 @@ flutter:
     - assets/images/
     - assets/icons/
     - assets/trucks/
+    - assets/helper/
 
   # fonts:
   #   - family: Schyler

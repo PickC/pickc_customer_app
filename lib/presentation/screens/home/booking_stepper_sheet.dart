@@ -530,13 +530,39 @@ String _imageFor(String name, bool isOpen) {
 // Step 2 — Cargo type + weight
 // ─────────────────────────────────────────────────────────────────────────────
 
-IconData _iconForCargo(String code) {
+(IconData, Color) _iconForCargo(String code) {
   final c = code.toLowerCase();
-  if (c.contains('industrial') || c.contains('goods')) return Icons.settings_outlined;
-  if (c.contains('vegetable') || c.contains('fruit')) return Icons.eco_outlined;
-  if (c.contains('household') || c.contains('home')) return Icons.home_outlined;
-  if (c.contains('fragile') || c.contains('glass') || c.contains('wine')) return Icons.wine_bar_outlined;
-  return Icons.inventory_2_outlined;
+  if (c.contains('industrial') || c.contains('machin') || c.contains('equipment')) {
+    return (Icons.precision_manufacturing_outlined, const Color(0xFFFF8C00));
+  }
+  if (c.contains('vegetable') || c.contains('fruit') || c.contains('food') || c.contains('agri') || c.contains('produce')) {
+    return (Icons.eco_outlined, const Color(0xFF4CAF50));
+  }
+  if (c.contains('household') || c.contains('home') || c.contains('furniture') || c.contains('shifting')) {
+    return (Icons.chair_outlined, const Color(0xFF42A5F5));
+  }
+  if (c.contains('fragile') || c.contains('glass') || c.contains('breakable') || c.contains('ceramic')) {
+    return (Icons.local_bar_outlined, const Color(0xFFEF5350));
+  }
+  if (c.contains('pharma') || c.contains('medicine') || c.contains('medical') || c.contains('health')) {
+    return (Icons.medical_services_outlined, const Color(0xFF26C6DA));
+  }
+  if (c.contains('electronic') || c.contains('appliance') || c.contains('device')) {
+    return (Icons.devices_outlined, const Color(0xFF7E57C2));
+  }
+  if (c.contains('chemical') || c.contains('hazard')) {
+    return (Icons.science_outlined, const Color(0xFFAB47BC));
+  }
+  if (c.contains('textile') || c.contains('cloth') || c.contains('fabric') || c.contains('garment')) {
+    return (Icons.checkroom_outlined, const Color(0xFFEC407A));
+  }
+  if (c.contains('steel') || c.contains('metal') || c.contains('iron')) {
+    return (Icons.hardware_outlined, const Color(0xFF78909C));
+  }
+  if (c.contains('other') || c.contains('general') || c.contains('misc')) {
+    return (Icons.category_outlined, const Color(0xFF8D6E63));
+  }
+  return (Icons.inventory_2_outlined, const Color(0xFF90A4AE));
 }
 
 class _Step2Cargo extends ConsumerWidget {
@@ -598,11 +624,14 @@ class _Step2Cargo extends ConsumerWidget {
                     ),
                     child: Row(
                       children: [
-                        Icon(_iconForCargo(item.code),
-                            color: isSelected
-                                ? AppColors.accentYellow
-                                : AppColors.textHint,
-                            size: 20),
+                        Builder(builder: (_) {
+                          final (iconData, iconColor) = _iconForCargo(item.code);
+                          return Icon(
+                            iconData,
+                            color: isSelected ? AppColors.accentYellow : iconColor,
+                            size: 20,
+                          );
+                        }),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(

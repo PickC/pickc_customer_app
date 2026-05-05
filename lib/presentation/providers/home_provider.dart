@@ -88,6 +88,10 @@ final dropAddressProvider = StateProvider<String>((ref) => '');
 /// true = pickup, false = drop
 final activeLocationFieldProvider = StateProvider<bool>((ref) => true);
 
+/// Incremented each time the map should pan back to current GPS location.
+/// HomeScreen listens and calls animateCamera when value changes.
+final panToMyLocationProvider = StateProvider<int>((ref) => 0);
+
 /// Decoded polyline point lists (filled after Directions API call).
 final driverToPickupRouteProvider = StateProvider<List<LatLng>>((ref) => []);
 final pickupToDropRouteProvider = StateProvider<List<LatLng>>((ref) => []);
@@ -136,24 +140,71 @@ final dropMarkerIconProvider = FutureProvider<BitmapDescriptor>((ref) async {
 /// Nearby vehicles — set from home screen after pickup is locked.
 final nearbyVehicleMarkersProvider = StateProvider<Set<Marker>>((ref) => {});
 
+/// Raw list of available on-duty driver records from the API.
+/// Stored as raw maps so mapMarkersProvider can filter by vehicleGroupID on the fly.
+final availableDriversDataProvider =
+    StateProvider<List<Map<String, dynamic>>>((ref) => []);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Computed map providers
 // ─────────────────────────────────────────────────────────────────────────────
 
 final mapMarkersProvider = Provider<Set<Marker>>((ref) {
-  final homeState = ref.watch(homeNotifierProvider);
-  final pickupLatLng = ref.watch(pickupLatLngProvider);
-  final dropLatLng = ref.watch(dropLatLngProvider);
-  final driver = ref.watch(currentDriverProvider).valueOrNull;
-  final truckIcon = ref.watch(truckMarkerIconProvider).valueOrNull;
-  final pickupIcon = ref.watch(pickupMarkerIconProvider).valueOrNull;
-  final dropIcon = ref.watch(dropMarkerIconProvider).valueOrNull;
-  final nearbyMarkers = ref.watch(nearbyVehicleMarkersProvider);
+  final homeState        = ref.watch(homeNotifierProvider);
+  final pickupLatLng     = ref.watch(pickupLatLngProvider);
+  final dropLatLng       = ref.watch(dropLatLngProvider);
+  final driver           = ref.watch(currentDriverProvider).valueOrNull;
+  final truckIcon        = ref.watch(truckMarkerIconProvider).valueOrNull;
+  final pickupIcon       = ref.watch(pickupMarkerIconProvider).valueOrNull;
+  final dropIcon         = ref.watch(dropMarkerIconProvider).valueOrNull;
+  final nearbyMarkers    = ref.watch(nearbyVehicleMarkersProvider);
+  final availDrivers     = ref.watch(availableDriversDataProvider);
+  final selectedGroupId  = ref.watch(selectedVehicleProvider); // null = no filter
 
   final markers = <Marker>{};
 
-  // Pickup marker — show whenever a pickup location is locked in
-  if (pickupLatLng != null && homeState != HomeState.idle && homeState != HomeState.selectingTrucks) {
+  // ── Available on-duty drivers (idle + selectingTrucks) ───────────────────
+  if (homeState == HomeState.idle || homeState == HomeState.selectingTrucks) {
+    for (final d in availDrivers) {
+      final lat = (d['currentLatitude']  as num?)?.toDouble()
+          ?? (d['latitude']  as num?)?.toDouble()
+          ?? (d['lat']       as num?)?.toDouble();
+      final lng = (d['currentLongitude'] as num?)?.toDouble()
+          ?? (d['longitude'] as num?)?.toDouble()
+          ?? (d['lng']       as num?)?.toDouble();
+      if (lat == null || lng == null || lat == 0.0 || lng == 0.0) continue;
+
+      // Filter by selected vehicle group when in selectingTrucks state.
+      // If vehicleGroupID is null in the response we can't filter, so show the marker.
+      final groupId = (d['vehicleGroupID'] as num?)?.toInt()
+          ?? (d['vehicleGroupId'] as num?)?.toInt()
+          ?? (d['groupId'] as num?)?.toInt();
+      if (homeState == HomeState.selectingTrucks &&
+          selectedGroupId != null &&
+          groupId != null &&
+          groupId != selectedGroupId) {
+        continue;
+      }
+
+      final driverId   = (d['driverID']   ?? d['driverId']   ?? d['id'])?.toString()  ?? '';
+      final driverName = (d['driverName'] ?? d['name'])?.toString() ?? 'Driver';
+      final vehicleNo  = ((d['vehicleNumber'] ?? d['vehicleNo'] ?? d['regNo'])?.toString() ?? '').trim();
+
+      markers.add(Marker(
+        markerId: MarkerId('avail_$driverId'),
+        position: LatLng(lat, lng),
+        icon: truckIcon ??
+            BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
+        infoWindow: InfoWindow(
+          title: driverName,
+          snippet: vehicleNo.isNotEmpty ? vehicleNo : 'Available',
+        ),
+      ));
+    }
+  }
+
+  // ── Pickup marker (selectingTrucks and beyond) ───────────────────────────
+  if (pickupLatLng != null && homeState != HomeState.idle) {
     markers.add(Marker(
       markerId: const MarkerId('pickup'),
       position: pickupLatLng,
@@ -163,8 +214,8 @@ final mapMarkersProvider = Provider<Set<Marker>>((ref) {
     ));
   }
 
-  // Drop marker — show from waitingForDriver onwards
-  if (dropLatLng != null && homeState != HomeState.idle && homeState != HomeState.selectingTrucks) {
+  // ── Drop marker (selectingTrucks and beyond) ─────────────────────────────
+  if (dropLatLng != null && homeState != HomeState.idle) {
     markers.add(Marker(
       markerId: const MarkerId('drop'),
       position: dropLatLng,
@@ -174,12 +225,12 @@ final mapMarkersProvider = Provider<Set<Marker>>((ref) {
     ));
   }
 
-  // Nearby vehicles (shown after pickup locked, before booking)
+  // ── Nearby vehicles from pickup-radius search ─────────────────────────────
   if (homeState == HomeState.selectingTrucks) {
     markers.addAll(nearbyMarkers);
   }
 
-  // Driver marker during trip
+  // ── Assigned driver marker during active trip ─────────────────────────────
   final showDriver = homeState == HomeState.bookingConfirmed ||
       homeState == HomeState.tripActive;
   if (showDriver &&
@@ -271,7 +322,8 @@ class HomeNotifier extends Notifier<HomeState> {
   Timer? _pollingTimer;
   Timer? _driverAssignTimer;
   Timer? _demoTripTimer;
-  Timer? _driverConfirmTimer; // polls isConfirm after booking saved
+  Timer? _driverConfirmTimer;    // polls isConfirm after booking saved
+  Timer? _availableDriversTimer; // polls on-duty drivers while idle
 
   @override
   HomeState build() => HomeState.idle;
@@ -279,6 +331,7 @@ class HomeNotifier extends Notifier<HomeState> {
   void goToIdle() {
     _cancelAllTimers();
     state = HomeState.idle;
+    startAvailableDriversPolling();
   }
 
   void onLocationsSet({
@@ -646,6 +699,7 @@ class HomeNotifier extends Notifier<HomeState> {
     ref.read(receiverMobileProvider.notifier).state = null;
     ref.read(scheduledDateTimeProvider.notifier).state = null;
     state = HomeState.idle;
+    startAvailableDriversPolling();
   }
 
   /// Called on app start. If a booking was in progress before the app was
@@ -818,6 +872,7 @@ class HomeNotifier extends Notifier<HomeState> {
     ref.read(labourOptionProvider.notifier).state = null;
     ref.read(bookingCancelledProvider.notifier).state = true;
     state = HomeState.idle;
+    startAvailableDriversPolling();
   }
 
   void startPolling() {
@@ -834,11 +889,54 @@ class HomeNotifier extends Notifier<HomeState> {
     _pollingTimer = null;
   }
 
+  // ── Available drivers polling ───────────────────────────────────────────────
+
+  void startAvailableDriversPolling() {
+    _availableDriversTimer?.cancel();
+    _fetchAvailableDrivers(); // fetch immediately on start
+    _availableDriversTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _fetchAvailableDrivers(),
+    );
+  }
+
+  void stopAvailableDriversPolling() {
+    _availableDriversTimer?.cancel();
+    _availableDriversTimer = null;
+  }
+
+  Future<void> _fetchAvailableDrivers() async {
+    if (state != HomeState.idle && state != HomeState.selectingTrucks) return;
+    try {
+      final dio = ref.read(dioClientProvider).dio;
+      final response = await dio.get(ApiConstants.availableDrivers);
+      final data = response.data;
+      List<dynamic> raw;
+      if (data is List) {
+        raw = data;
+      } else if (data is Map<String, dynamic>) {
+        raw = (data['value'] as List<dynamic>?)
+            ?? (data['data']    as List<dynamic>?)
+            ?? (data['drivers'] as List<dynamic>?)
+            ?? [];
+      } else {
+        raw = [];
+      }
+      final list = raw.whereType<Map<String, dynamic>>().toList();
+      debugPrint('[availableDrivers] fetched ${list.length} drivers');
+      if (list.isNotEmpty) debugPrint('[availableDrivers] sample: ${list.first}');
+      ref.read(availableDriversDataProvider.notifier).state = list;
+    } catch (e) {
+      debugPrint('[availableDrivers] error: $e');
+    }
+  }
+
   void _cancelAllTimers() {
     _driverAssignTimer?.cancel();
     _driverConfirmTimer?.cancel();
     _demoTripTimer?.cancel();
     stopPolling();
+    stopAvailableDriversPolling();
   }
 
   Future<void> _poll() async {

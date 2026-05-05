@@ -61,6 +61,7 @@ class ApiConstants {
 
   // ── Drivers ──────────────────────────────────────────────────────────────────
   static const String getDriver          = 'master/drivers/{driverId}';
+  static const String availableDrivers   = 'master/drivers/available';
 
   // ── Booking history (alias) ───────────────────────────────────────────────────
   static const String bookingHistory     = 'booking/bookings/customer/{mobile}';

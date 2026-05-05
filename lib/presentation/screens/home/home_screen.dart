@@ -40,6 +40,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       final restored = await notifier.restoreActiveBookingIfAny();
       if (!restored) {
         notifier.startPolling();
+        notifier.startAvailableDriversPolling();
         _initLocation();
       }
     });
@@ -152,6 +153,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       if (next == HomeState.bookingConfirmed) {
         Future.delayed(const Duration(milliseconds: 600), _fitMapToMarkers);
       }
+    });
+
+    // Pan to current GPS location when user unlocks a location field
+    ref.listen<int>(panToMyLocationProvider, (prev, _) {
+      _mapController?.animateCamera(
+        CameraUpdate.newLatLngZoom(_currentLocation, 15),
+      );
     });
 
     // Pan camera when pickup location is set from input box
@@ -360,11 +368,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           // 3-step booking stepper — shown in selectingTrucks state
           if (homeState == HomeState.selectingTrucks)
             DraggableScrollableSheet(
-              initialChildSize: 0.52,
-              minChildSize: 0.52,
+              initialChildSize: 0.50,
+              minChildSize: 0.35,
               maxChildSize: 0.92,
               snap: true,
-              snapSizes: const [0.52, 0.92],
+              snapSizes: const [0.35, 0.50, 0.92],
               builder: (context, scrollController) =>
                   BookingStepperSheet(scrollController: scrollController),
             ),
