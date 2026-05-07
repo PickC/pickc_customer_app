@@ -208,14 +208,35 @@ class _BookingFormWidgetState extends ConsumerState<BookingFormWidget> {
 
   @override
   Widget build(BuildContext context) {
-    // Auto-fill fields when map pin reverse-geocodes an address
+    // When returning to idle after a booking cancel/exit, reset locks + fields.
+    // Excludes selectingTrucks→idle (user just unlocked a field — handled separately).
+    ref.listen<HomeState>(homeNotifierProvider, (prev, next) {
+      if (next == HomeState.idle &&
+          prev != null &&
+          prev != HomeState.idle &&
+          prev != HomeState.selectingTrucks) {
+        setState(() {
+          _pickupLocked = false;
+          _dropLocked = false;
+        });
+        _pickupCtrl.clear();
+        _dropCtrl.clear();
+        setState(() {
+          _pickupSuggestions = [];
+          _dropSuggestions = [];
+        });
+      }
+    });
+
+    // Auto-fill fields when map pin reverse-geocodes an address.
+    // Also clears the field when the provider is reset to ''.
     ref.listen<String>(pickupAddressProvider, (prev, address) {
-      if (address.isNotEmpty && _pickupCtrl.text != address && !_pickupLocked) {
+      if (!_pickupLocked && _pickupCtrl.text != address) {
         _pickupCtrl.text = address;
       }
     });
     ref.listen<String>(dropAddressProvider, (prev, address) {
-      if (address.isNotEmpty && _dropCtrl.text != address && !_dropLocked) {
+      if (!_dropLocked && _dropCtrl.text != address) {
         _dropCtrl.text = address;
       }
     });
