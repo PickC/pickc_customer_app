@@ -233,13 +233,14 @@ final mapMarkersProvider = Provider<Set<Marker>>((ref) {
   // ── Assigned driver marker during active trip ─────────────────────────────
   final showDriver = homeState == HomeState.bookingConfirmed ||
       homeState == HomeState.tripActive;
-  if (showDriver &&
-      driver != null &&
-      driver.currentLat != null &&
-      driver.currentLng != null) {
+  final driverLat = driver?.currentLat;
+  final driverLng = driver?.currentLng;
+  final driverPosValid = driverLat != null && driverLng != null &&
+      driverLat.abs() > 0.001 && driverLng.abs() > 0.001;
+  if (showDriver && driver != null && driverPosValid) {
     markers.add(Marker(
       markerId: const MarkerId('driver'),
-      position: LatLng(driver.currentLat!, driver.currentLng!),
+      position: LatLng(driverLat, driverLng),
       icon: truckIcon ??
           BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueYellow),
       infoWindow: InfoWindow(
@@ -831,11 +832,6 @@ class HomeNotifier extends Notifier<HomeState> {
     ref.read(driverToPickupRouteProvider.notifier).state = [];
     ref.read(pickupToDropRouteProvider.notifier).state = [];
     ref.read(tripEventProvider.notifier).state = TripEvent.none;
-    ref.read(pickupLatLngProvider.notifier).state = null;
-    ref.read(dropLatLngProvider.notifier).state = null;
-    ref.read(pickupAddressProvider.notifier).state = '';
-    ref.read(dropAddressProvider.notifier).state = '';
-    ref.read(activeLocationFieldProvider.notifier).state = true;
     ref.read(selectedVehicleProvider.notifier).state = null;
     ref.read(selectedVehicleTypeIdProvider.notifier).state = 1300;
     ref.read(selectedCargoLookupIdProvider.notifier).state = null;
@@ -843,7 +839,8 @@ class HomeNotifier extends Notifier<HomeState> {
     ref.read(selectedLoadingLookupIdProvider.notifier).state = null;
     ref.read(labourOptionProvider.notifier).state = null;
     ref.read(bookingCancelledProvider.notifier).state = true;
-    ref.read(panToMyLocationProvider.notifier).state++;
+    // Location reset + camera pan handled by HomeScreen._initLocation()
+    // which is triggered when homeState → idle from a booking state.
     state = HomeState.idle;
   }
 
@@ -870,11 +867,6 @@ class HomeNotifier extends Notifier<HomeState> {
     ref.read(driverToPickupRouteProvider.notifier).state = [];
     ref.read(pickupToDropRouteProvider.notifier).state = [];
     ref.read(tripEventProvider.notifier).state = TripEvent.none;
-    ref.read(pickupLatLngProvider.notifier).state = null;
-    ref.read(dropLatLngProvider.notifier).state = null;
-    ref.read(pickupAddressProvider.notifier).state = '';
-    ref.read(dropAddressProvider.notifier).state = '';
-    ref.read(activeLocationFieldProvider.notifier).state = true;
     ref.read(selectedVehicleProvider.notifier).state = null;
     ref.read(selectedVehicleTypeIdProvider.notifier).state = 1300;
     ref.read(selectedCargoLookupIdProvider.notifier).state = null;
@@ -882,7 +874,8 @@ class HomeNotifier extends Notifier<HomeState> {
     ref.read(selectedLoadingLookupIdProvider.notifier).state = null;
     ref.read(labourOptionProvider.notifier).state = null;
     ref.read(bookingCancelledProvider.notifier).state = true;
-    ref.read(panToMyLocationProvider.notifier).state++;
+    // Location reset + camera pan handled by HomeScreen._initLocation()
+    // which is triggered when homeState → idle from a booking state.
     state = HomeState.idle;
     startAvailableDriversPolling();
   }

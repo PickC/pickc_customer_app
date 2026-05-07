@@ -141,17 +141,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     ref.listen<HomeState>(homeNotifierProvider, (prev, next) {
       if (next == HomeState.paymentDue) {
-        // Show "Trip Completed" dialog, then route to payment
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _showTripCompletedDialog(context);
         });
       }
       if (next == HomeState.waitingForDriver) {
-        // Fit map so both pickup + drop markers are visible
         Future.delayed(const Duration(milliseconds: 800), _fitMapToMarkers);
       }
       if (next == HomeState.bookingConfirmed) {
         Future.delayed(const Duration(milliseconds: 600), _fitMapToMarkers);
+      }
+      // After cancellation or exit, re-acquire GPS and snap map to current location.
+      // Excludes idle→idle and selectingTrucks→idle (user just unlocked a field).
+      if (next == HomeState.idle &&
+          prev != null &&
+          prev != HomeState.idle &&
+          prev != HomeState.selectingTrucks) {
+        Future.delayed(const Duration(milliseconds: 300), _initLocation);
       }
     });
 
