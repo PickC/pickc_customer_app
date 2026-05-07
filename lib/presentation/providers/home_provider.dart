@@ -831,6 +831,11 @@ class HomeNotifier extends Notifier<HomeState> {
     ref.read(driverToPickupRouteProvider.notifier).state = [];
     ref.read(pickupToDropRouteProvider.notifier).state = [];
     ref.read(tripEventProvider.notifier).state = TripEvent.none;
+    ref.read(pickupLatLngProvider.notifier).state = null;
+    ref.read(dropLatLngProvider.notifier).state = null;
+    ref.read(pickupAddressProvider.notifier).state = '';
+    ref.read(dropAddressProvider.notifier).state = '';
+    ref.read(activeLocationFieldProvider.notifier).state = true;
     ref.read(selectedVehicleProvider.notifier).state = null;
     ref.read(selectedVehicleTypeIdProvider.notifier).state = 1300;
     ref.read(selectedCargoLookupIdProvider.notifier).state = null;
@@ -838,6 +843,7 @@ class HomeNotifier extends Notifier<HomeState> {
     ref.read(selectedLoadingLookupIdProvider.notifier).state = null;
     ref.read(labourOptionProvider.notifier).state = null;
     ref.read(bookingCancelledProvider.notifier).state = true;
+    ref.read(panToMyLocationProvider.notifier).state++;
     state = HomeState.idle;
   }
 
@@ -864,6 +870,11 @@ class HomeNotifier extends Notifier<HomeState> {
     ref.read(driverToPickupRouteProvider.notifier).state = [];
     ref.read(pickupToDropRouteProvider.notifier).state = [];
     ref.read(tripEventProvider.notifier).state = TripEvent.none;
+    ref.read(pickupLatLngProvider.notifier).state = null;
+    ref.read(dropLatLngProvider.notifier).state = null;
+    ref.read(pickupAddressProvider.notifier).state = '';
+    ref.read(dropAddressProvider.notifier).state = '';
+    ref.read(activeLocationFieldProvider.notifier).state = true;
     ref.read(selectedVehicleProvider.notifier).state = null;
     ref.read(selectedVehicleTypeIdProvider.notifier).state = 1300;
     ref.read(selectedCargoLookupIdProvider.notifier).state = null;
@@ -871,6 +882,7 @@ class HomeNotifier extends Notifier<HomeState> {
     ref.read(selectedLoadingLookupIdProvider.notifier).state = null;
     ref.read(labourOptionProvider.notifier).state = null;
     ref.read(bookingCancelledProvider.notifier).state = true;
+    ref.read(panToMyLocationProvider.notifier).state++;
     state = HomeState.idle;
     startAvailableDriversPolling();
   }
