@@ -323,6 +323,8 @@ class _Step1Vehicle extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final vehiclesAsync = ref.watch(vehicleTypesProvider);
     final selectedId = ref.watch(selectedVehicleProvider);
+    final totalAvailable = ref.watch(availableVehicleCountProvider);
+    final isOpen = ref.watch(selectedVehicleTypeIdProvider) == 1300;
 
     return ListView(
       controller: scrollController,
@@ -330,6 +332,42 @@ class _Step1Vehicle extends ConsumerWidget {
       children: [
         const LoadingUnloadingCard(),
         const SizedBox(height: 10),
+
+        // Available count banner (only when a vehicle group is selected)
+        if (selectedId != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.statusCompleted.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: AppColors.statusCompleted.withValues(alpha: 0.4),
+                  width: 0.8,
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.local_shipping_outlined,
+                      color: AppColors.statusCompleted, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      totalAvailable > 0
+                          ? '$totalAvailable ${isOpen ? "Open" : "Closed"} vehicle${totalAvailable == 1 ? "" : "s"} nearby'
+                          : 'No matching vehicles nearby right now',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.statusCompleted,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
 
         vehiclesAsync.when(
           loading: () => const Center(
@@ -376,6 +414,8 @@ class _VehicleTile extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isOpen = ref.watch(_bodyOpenProvider(vehicle.id as int));
+    final countsByGroup = ref.watch(availableCountByGroupProvider);
+    final groupCount = countsByGroup[vehicle.id as int] ?? 0;
 
     return GestureDetector(
       onTap: onTap,
@@ -427,11 +467,17 @@ class _VehicleTile extends ConsumerWidget {
                     style: AppTextStyles.bodySmall,
                   ),
                   Text(
-                    isSelected ? '~19 mins away' : 'Available nearby',
+                    isSelected
+                        ? '~19 mins away'
+                        : (groupCount > 0
+                            ? '$groupCount available nearby'
+                            : 'No vehicles nearby'),
                     style: AppTextStyles.bodySmall.copyWith(
                       color: isSelected
                           ? AppColors.statusCompleted
-                          : AppColors.textHint,
+                          : (groupCount > 0
+                              ? AppColors.statusCompleted
+                              : AppColors.textHint),
                       fontSize: 11,
                     ),
                   ),

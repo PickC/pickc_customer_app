@@ -154,6 +154,51 @@ final availableDriversDataProvider =
 // Computed map providers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Count of on-duty vehicles matching the currently selected vehicleGroup
+/// and vehicleType. Used to display "N {Group} {Type} vehicles nearby".
+final availableVehicleCountProvider = Provider<int>((ref) {
+  final drivers       = ref.watch(availableDriversDataProvider);
+  final selectedGroup = ref.watch(selectedVehicleProvider);
+  final selectedType  = ref.watch(selectedVehicleTypeIdProvider);
+  int count = 0;
+  for (final d in drivers) {
+    final lat = (d['currentLatitude'] as num?)?.toDouble()
+        ?? (d['latitude'] as num?)?.toDouble();
+    final lng = (d['currentLongitude'] as num?)?.toDouble()
+        ?? (d['longitude'] as num?)?.toDouble();
+    if (lat == null || lng == null || lat == 0.0 || lng == 0.0) continue;
+    final groupId = (d['vehicleGroup'] as num?)?.toInt()
+        ?? (d['vehicleGroupID'] as num?)?.toInt();
+    final typeId  = (d['vehicleType']  as num?)?.toInt();
+    if (selectedGroup != null && groupId != null && groupId != selectedGroup) continue;
+    if (typeId != null && typeId != selectedType) continue;
+    count++;
+  }
+  return count;
+});
+
+/// Per-vehicleGroup count for the currently selected vehicleType.
+/// Used by the vehicle tile to show "N available" per row.
+final availableCountByGroupProvider = Provider<Map<int, int>>((ref) {
+  final drivers      = ref.watch(availableDriversDataProvider);
+  final selectedType = ref.watch(selectedVehicleTypeIdProvider);
+  final counts = <int, int>{};
+  for (final d in drivers) {
+    final lat = (d['currentLatitude'] as num?)?.toDouble()
+        ?? (d['latitude'] as num?)?.toDouble();
+    final lng = (d['currentLongitude'] as num?)?.toDouble()
+        ?? (d['longitude'] as num?)?.toDouble();
+    if (lat == null || lng == null || lat == 0.0 || lng == 0.0) continue;
+    final groupId = (d['vehicleGroup'] as num?)?.toInt()
+        ?? (d['vehicleGroupID'] as num?)?.toInt();
+    final typeId  = (d['vehicleType']  as num?)?.toInt();
+    if (groupId == null) continue;
+    if (typeId != null && typeId != selectedType) continue;
+    counts[groupId] = (counts[groupId] ?? 0) + 1;
+  }
+  return counts;
+});
+
 final mapMarkersProvider = Provider<Set<Marker>>((ref) {
   final homeState        = ref.watch(homeNotifierProvider);
   final pickupLatLng     = ref.watch(pickupLatLngProvider);
@@ -164,11 +209,12 @@ final mapMarkersProvider = Provider<Set<Marker>>((ref) {
   final dropIcon         = ref.watch(dropMarkerIconProvider).valueOrNull;
   final nearbyMarkers    = ref.watch(nearbyVehicleMarkersProvider);
   final availDrivers     = ref.watch(availableDriversDataProvider);
-  final selectedGroupId  = ref.watch(selectedVehicleProvider); // null = no filter
+  final selectedGroupId  = ref.watch(selectedVehicleProvider);       // 1000-1003 / null
+  final selectedTypeId   = ref.watch(selectedVehicleTypeIdProvider); // 1300 Open / 1301 Closed
 
   final markers = <Marker>{};
 
-  // ── Available on-duty drivers (idle + selectingTrucks) ───────────────────
+  // ── Available on-duty vehicles (idle + selectingTrucks) ──────────────────
   if (homeState == HomeState.idle || homeState == HomeState.selectingTrucks) {
     for (final d in availDrivers) {
       final lat = (d['currentLatitude']  as num?)?.toDouble()
@@ -179,21 +225,21 @@ final mapMarkersProvider = Provider<Set<Marker>>((ref) {
           ?? (d['lng']       as num?)?.toDouble();
       if (lat == null || lng == null || lat == 0.0 || lng == 0.0) continue;
 
-      // Filter by selected vehicle group when in selectingTrucks state.
-      // If vehicleGroupID is null in the response we can't filter, so show the marker.
-      final groupId = (d['vehicleGroupID'] as num?)?.toInt()
-          ?? (d['vehicleGroupId'] as num?)?.toInt()
-          ?? (d['groupId'] as num?)?.toInt();
-      if (homeState == HomeState.selectingTrucks &&
-          selectedGroupId != null &&
-          groupId != null &&
-          groupId != selectedGroupId) {
-        continue;
+      // Filter by selected vehicleGroup + vehicleType when in selectingTrucks.
+      // If a field is null in the response, treat as match (don't drop marker).
+      final groupId = (d['vehicleGroup']   as num?)?.toInt()
+          ?? (d['vehicleGroupID'] as num?)?.toInt()
+          ?? (d['vehicleGroupId'] as num?)?.toInt();
+      final typeId  = (d['vehicleType']    as num?)?.toInt()
+          ?? (d['vehicleTypeId']  as num?)?.toInt();
+      if (homeState == HomeState.selectingTrucks) {
+        if (selectedGroupId != null && groupId != null && groupId != selectedGroupId) continue;
+        if (typeId != null && typeId != selectedTypeId) continue;
       }
 
       final driverId   = (d['driverID']   ?? d['driverId']   ?? d['id'])?.toString()  ?? '';
       final driverName = (d['driverName'] ?? d['name'])?.toString() ?? 'Driver';
-      final vehicleNo  = ((d['vehicleNumber'] ?? d['vehicleNo'] ?? d['regNo'])?.toString() ?? '').trim();
+      final vehicleNo  = ((d['vehicleNo'] ?? d['vehicleNumber'] ?? d['regNo'])?.toString() ?? '').trim();
 
       markers.add(Marker(
         markerId: MarkerId('avail_$driverId'),
@@ -960,7 +1006,7 @@ class HomeNotifier extends Notifier<HomeState> {
     if (state != HomeState.idle && state != HomeState.selectingTrucks) return;
     try {
       final dio = ref.read(dioClientProvider).dio;
-      final response = await dio.get(ApiConstants.availableDrivers);
+      final response = await dio.get(ApiConstants.vehiclesOnDuty);
       final data = response.data;
       List<dynamic> raw;
       if (data is List) {
