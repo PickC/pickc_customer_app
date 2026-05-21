@@ -29,6 +29,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   LatLng? _mapCenter;
   bool _isReverseGeocoding = false;
   bool _isProgrammaticMove = false; // suppress geocode when map pans from input
+  bool _suppressNextLatLngPan = false; // skip auto-pan when lat/lng came from user's map pan
 
   @override
   void initState() {
@@ -113,8 +114,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       final results = (response.data['results'] as List?) ?? [];
       if (results.isEmpty || !mounted) return;
       final address = results[0]['formatted_address'] as String? ?? '';
-      // Write to whichever field is currently active
+      // Write to whichever field is currently active.
+      // Set flag so the lat/lng listener doesn't re-pan the camera (which would
+      // reset the user's zoom level) — the user already moved the map themselves.
       final isPickup = ref.read(activeLocationFieldProvider);
+      _suppressNextLatLngPan = true;
       if (isPickup) {
         ref.read(pickupAddressProvider.notifier).state = address;
         ref.read(pickupLatLngProvider.notifier).state = pos;
@@ -168,9 +172,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       );
     });
 
-    // Pan camera when pickup location is set from input box
+    // Pan camera when pickup location is set from input box / nearby tap.
+    // Skipped when the update came from _reverseGeocode (user panning the map)
+    // — otherwise we'd reset their zoom level on every pan.
     ref.listen<LatLng?>(pickupLatLngProvider, (prev, pickup) {
       if (pickup == null || pickup == prev) return;
+      if (_suppressNextLatLngPan) {
+        _suppressNextLatLngPan = false;
+        return;
+      }
       _isProgrammaticMove = true;
       final drop = ref.read(dropLatLngProvider);
       if (drop != null) {
@@ -180,9 +190,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       }
     });
 
-    // Pan camera when drop location is set from input box
     ref.listen<LatLng?>(dropLatLngProvider, (prev, drop) {
       if (drop == null || drop == prev) return;
+      if (_suppressNextLatLngPan) {
+        _suppressNextLatLngPan = false;
+        return;
+      }
       _isProgrammaticMove = true;
       final pickup = ref.read(pickupLatLngProvider);
       if (pickup != null) {
