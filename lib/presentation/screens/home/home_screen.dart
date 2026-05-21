@@ -261,6 +261,51 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       }
     });
 
+    // Driver cancelled the booking via SignalR → show alert + back to selection
+    ref.listen<String?>(driverCancelMessageProvider, (prev, message) {
+      if (message == null) return;
+      ref.read(driverCancelMessageProvider.notifier).state = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: AppColors.backgroundDark,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: const BorderSide(color: AppColors.statusCancelled, width: 1),
+            ),
+            title: Text(
+              'Booking Cancelled',
+              style: AppTextStyles.titleLarge
+                  .copyWith(color: AppColors.statusCancelled),
+              textAlign: TextAlign.center,
+            ),
+            content: Text(
+              message,
+              style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textLight),
+              textAlign: TextAlign.center,
+            ),
+            actionsAlignment: MainAxisAlignment.center,
+            actions: [
+              ElevatedButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accentYellow,
+                  foregroundColor: AppColors.backgroundDark,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                ),
+                child: const Text('OK',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+        );
+      });
+    });
+
     ref.listen<String?>(bookingErrorProvider, (prev, error) {
       if (error == null) return;
       ref.read(bookingErrorProvider.notifier).state = null;
