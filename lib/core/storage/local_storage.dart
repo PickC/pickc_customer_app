@@ -93,6 +93,53 @@ class LocalStorage {
   String? getDeviceId() => _prefs.getString(StorageKeys.deviceId);
   Future<void> setDeviceId(String v) => _prefs.setString(StorageKeys.deviceId, v);
 
+  // ── Trip session snapshot (persisted across app restarts) ─────────────────
+
+  String? getOtp() => _prefs.getString(StorageKeys.otp);
+  Future<void> setOtp(String v) => _prefs.setString(StorageKeys.otp, v);
+
+  String? getDriverName() => _prefs.getString(StorageKeys.driverName);
+  Future<void> setDriverName(String v) =>
+      _prefs.setString(StorageKeys.driverName, v);
+
+  String? getDriverMobile() => _prefs.getString(StorageKeys.driverMobile);
+  Future<void> setDriverMobile(String v) =>
+      _prefs.setString(StorageKeys.driverMobile, v);
+
+  String? getVehicleNo() => _prefs.getString(StorageKeys.vehicleNo);
+  Future<void> setVehicleNo(String v) =>
+      _prefs.setString(StorageKeys.vehicleNo, v);
+
+  int getEtaMinutes() => _prefs.getInt(StorageKeys.etaMinutes) ?? 0;
+  Future<void> setEtaMinutes(int v) =>
+      _prefs.setInt(StorageKeys.etaMinutes, v);
+
+  double getDriverLat() =>
+      double.tryParse(_prefs.getString(StorageKeys.driverLat) ?? '0') ?? 0;
+  Future<void> setDriverLat(double v) =>
+      _prefs.setString(StorageKeys.driverLat, v.toString());
+
+  double getDriverLng() =>
+      double.tryParse(_prefs.getString(StorageKeys.driverLng) ?? '0') ?? 0;
+  Future<void> setDriverLng(double v) =>
+      _prefs.setString(StorageKeys.driverLng, v.toString());
+
+  /// Wipe the per-trip snapshot on cancel / completion / payment so the next
+  /// booking can't read stale driver/OTP data.
+  Future<void> clearTripSession() async {
+    await Future.wait([
+      _prefs.remove(StorageKeys.otp),
+      _prefs.remove(StorageKeys.driverName),
+      _prefs.remove(StorageKeys.driverMobile),
+      _prefs.remove(StorageKeys.vehicleNo),
+      _prefs.remove(StorageKeys.etaMinutes),
+      _prefs.remove(StorageKeys.driverLat),
+      _prefs.remove(StorageKeys.driverLng),
+      _prefs.remove(StorageKeys.tripId),
+      _prefs.remove(StorageKeys.driverId),
+    ]);
+  }
+
   Future<void> clearAll() async {
     await _prefs.clear();
   }

@@ -33,4 +33,15 @@ class StorageKeys {
   static const String bookingState = 'bookingState';
   static const String announcementEnabled = 'announcement_shared_pref_key';
   static const String volumeStatus = 'volumeStatus';
+
+  // Trip session snapshot — written when SignalR delivers an update, read on
+  // app restart so the customer sees the same driver/OTP/position they had
+  // before the process was killed.
+  static const String otp           = 'session_otp';
+  static const String driverName    = 'session_driver_name';
+  static const String driverMobile  = 'session_driver_mobile';
+  static const String vehicleNo     = 'session_vehicle_no';
+  static const String etaMinutes    = 'session_eta_minutes';
+  static const String driverLat     = 'session_driver_lat';
+  static const String driverLng     = 'session_driver_lng';
 }

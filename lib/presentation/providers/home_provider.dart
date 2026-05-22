@@ -382,6 +382,7 @@ class HomeNotifier extends Notifier<HomeState> {
 
   final _tripSignalR = SignalRService();
   String _watchedTripId = ''; // currently watched trip (real-time GPS via TripHub)
+  DateTime _lastPositionPersist = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   HomeState build() => HomeState.idle;
@@ -606,6 +607,9 @@ class HomeNotifier extends Notifier<HomeState> {
     if (_watchedTripId == tripId && _tripSignalR.isConnected) return;
 
     _watchedTripId = tripId;
+    // Persist tripId so we can re-watch it on app restart.
+    unawaited(ref.read(localStorageProvider).setTripId(tripId));
+
     try {
       await _tripSignalR.connect(
         tokenGetter: () => ref.read(secureStorageProvider).getAuthToken(),
@@ -614,6 +618,15 @@ class HomeNotifier extends Notifier<HomeState> {
       _tripSignalR.onDriverLocationUpdated((id, lat, lng, bearing, speedKmh) {
         if (id != _watchedTripId) return;
         ref.read(currentDriverProvider.notifier).updatePosition(lat, lng);
+        // Throttle disk writes to once every ~3s — SignalR can fire several
+        // updates per second on a healthy trip.
+        final now = DateTime.now();
+        if (now.difference(_lastPositionPersist).inMilliseconds >= 3000) {
+          _lastPositionPersist = now;
+          final ls = ref.read(localStorageProvider);
+          unawaited(ls.setDriverLat(lat));
+          unawaited(ls.setDriverLng(lng));
+        }
       });
       _tripSignalR.onTripEnded((id) {
         if (id != _watchedTripId) return;
@@ -673,9 +686,21 @@ class HomeNotifier extends Notifier<HomeState> {
     ref.read(otpProvider.notifier).state = event.otp;
     ref.read(etaMinutesProvider.notifier).state = 11;
 
+    // Persist trip session so the customer doesn't lose OTP / driver info
+    // if the app is killed mid-trip.
+    final localStorage = ref.read(localStorageProvider);
     if (event.driverId.isNotEmpty) {
-      await ref.read(localStorageProvider).setDriverId(event.driverId);
+      await localStorage.setDriverId(event.driverId);
     }
+    await Future.wait([
+      localStorage.setOtp(event.otp),
+      localStorage.setDriverName(event.driverName),
+      localStorage.setDriverMobile(event.driverMobile),
+      localStorage.setVehicleNo(event.vehicleNo),
+      localStorage.setEtaMinutes(11),
+      localStorage.setDriverLat(driverPos.latitude),
+      localStorage.setDriverLng(driverPos.longitude),
+    ]);
 
     await ref.read(currentDriverProvider.notifier).loadDriver(
           bookingNo: event.bookingNo,
@@ -708,6 +733,7 @@ class HomeNotifier extends Notifier<HomeState> {
     // Disconnect — booking lifecycle is over (per spec)
     unawaited(_stopBookingSignalR());
     unawaited(_stopTripTracking());
+    unawaited(ref.read(localStorageProvider).clearTripSession());
   }
 
   Future<void> _onBookingCancelledByDriver(String bookingNo, String cancelledBy) async {
@@ -728,6 +754,7 @@ class HomeNotifier extends Notifier<HomeState> {
     state = HomeState.selectingTrucks;
     unawaited(_stopBookingSignalR());
     unawaited(_stopTripTracking());
+    unawaited(ref.read(localStorageProvider).clearTripSession());
   }
 
   /// Demo fallback: simulates 3-second driver assignment.
@@ -844,6 +871,7 @@ class HomeNotifier extends Notifier<HomeState> {
     _cancelAllTimers();
     unawaited(_stopBookingSignalR());
     unawaited(_stopTripTracking());
+    unawaited(ref.read(localStorageProvider).clearTripSession());
     ref.read(otpProvider.notifier).state = '';
     ref.read(etaMinutesProvider.notifier).state = 0;
     ref.read(driverToPickupRouteProvider.notifier).state = [];
@@ -888,6 +916,41 @@ class HomeNotifier extends Notifier<HomeState> {
     }
     if (toLat != 0 && toLng != 0) {
       ref.read(dropLatLngProvider.notifier).state = LatLng(toLat, toLng);
+    }
+
+    // ── Restore trip session snapshot BEFORE hitting the API ─────────────
+    // So the UI shows the same driver/OTP/position the customer had before
+    // the app was killed. API + SignalR will then upgrade this with fresh data.
+    final savedOtp        = localStorage.getOtp() ?? '';
+    final savedDriverName = localStorage.getDriverName() ?? '';
+    final savedDriverMob  = localStorage.getDriverMobile() ?? '';
+    final savedVehicleNo  = localStorage.getVehicleNo() ?? '';
+    final savedEta        = localStorage.getEtaMinutes();
+    final savedDLat       = localStorage.getDriverLat();
+    final savedDLng       = localStorage.getDriverLng();
+    final savedDriverId   = localStorage.getDriverId() ?? '';
+
+    if (savedOtp.isNotEmpty) {
+      ref.read(otpProvider.notifier).state = savedOtp;
+    }
+    if (savedEta > 0) {
+      ref.read(etaMinutesProvider.notifier).state = savedEta;
+    }
+    if (savedDriverName.isNotEmpty || savedVehicleNo.isNotEmpty) {
+      await ref.read(currentDriverProvider.notifier).loadDriver(
+            bookingNo: bookingNo,
+            position: (savedDLat != 0 && savedDLng != 0)
+                ? LatLng(savedDLat, savedDLng)
+                : null,
+            driverData: {
+              'driverId':      savedDriverId,
+              'driverName':    savedDriverName,
+              'driverMobile':  savedDriverMob,
+              'vehicleNumber': savedVehicleNo,
+              'currentLat':    savedDLat != 0 ? savedDLat : null,
+              'currentLng':    savedDLng != 0 ? savedDLng : null,
+            },
+          );
     }
 
     // Optimistically show waitingForDriver while we fetch the real status
@@ -980,6 +1043,7 @@ class HomeNotifier extends Notifier<HomeState> {
     _cancelAllTimers();
     unawaited(_stopBookingSignalR());
     unawaited(_stopTripTracking());
+    unawaited(ref.read(localStorageProvider).clearTripSession());
     final localStorage = ref.read(localStorageProvider);
     final bookingNo    = localStorage.getBookingNo() ?? '';
 
@@ -1017,6 +1081,7 @@ class HomeNotifier extends Notifier<HomeState> {
     _cancelAllTimers();
     unawaited(_stopBookingSignalR());
     unawaited(_stopTripTracking());
+    unawaited(ref.read(localStorageProvider).clearTripSession());
 
     final localStorage = ref.read(localStorageProvider);
     final bookingNo = localStorage.getBookingNo() ?? '';
