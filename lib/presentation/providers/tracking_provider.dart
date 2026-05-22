@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../core/services/signalr_service.dart';
+import 'providers.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State — sealed class (mirrors BLoC state pattern)
@@ -87,7 +88,9 @@ class TrackingNotifier extends AutoDisposeNotifier<TrackingState> {
     state = const TrackingLoading();
 
     try {
-      await _signalR.connect();
+      await _signalR.connect(
+        tokenGetter: () => ref.read(secureStorageProvider).getAuthToken(),
+      );
       _registerListeners();
       await _signalR.watchTrip(tripId);
     } catch (e) {

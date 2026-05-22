@@ -567,7 +567,9 @@ class HomeNotifier extends Notifier<HomeState> {
     if (bookingNo.isEmpty) return;
     _watchedBookingNo = bookingNo;
     try {
-      await _bookingSignalR.connect();
+      await _bookingSignalR.connect(
+        tokenGetter: () => ref.read(secureStorageProvider).getAuthToken(),
+      );
       _bookingSignalR.clearListeners(); // avoid duplicates on reconnect
       _bookingSignalR.onBookingAccepted(_onBookingAccepted);
       _bookingSignalR.onDriverReachedPickup(_onDriverReachedPickup);

@@ -14,10 +14,19 @@ class BookingSignalRService {
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
-  Future<void> connect() async {
+  /// [tokenGetter] is called on every connect / reconnect attempt so the
+  /// latest JWT is attached to the WebSocket handshake. May return null.
+  Future<void> connect({Future<String?> Function()? tokenGetter}) async {
     if (isConnected) return;
     _hub = HubConnectionBuilder()
-        .withUrl(hubUrl)
+        .withUrl(
+          hubUrl,
+          options: HttpConnectionOptions(
+            accessTokenFactory: tokenGetter == null
+                ? null
+                : () async => (await tokenGetter()) ?? '',
+          ),
+        )
         .withAutomaticReconnect(retryDelays: [0, 2000, 5000, 10000, 30000])
         .build();
     await _hub!.start();

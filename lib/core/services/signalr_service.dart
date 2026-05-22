@@ -13,11 +13,20 @@ class SignalRService {
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
-  Future<void> connect() async {
+  /// [tokenGetter] is called on every connect / reconnect attempt so the
+  /// latest JWT is attached to the WebSocket handshake. May return null.
+  Future<void> connect({Future<String?> Function()? tokenGetter}) async {
     if (isConnected) return;
 
     _hub = HubConnectionBuilder()
-        .withUrl(hubUrl)
+        .withUrl(
+          hubUrl,
+          options: HttpConnectionOptions(
+            accessTokenFactory: tokenGetter == null
+                ? null
+                : () async => (await tokenGetter()) ?? '',
+          ),
+        )
         .withAutomaticReconnect(retryDelays: [0, 2000, 5000, 10000, 30000])
         .build();
 
@@ -31,13 +40,11 @@ class SignalRService {
 
   // ── Customer subscriptions ─────────────────────────────────────────────────
 
-  /// Subscribe to live updates for [tripId].
   Future<void> watchTrip(String tripId) async {
     if (!isConnected || tripId.isEmpty) return;
     await _hub!.invoke('WatchTrip', args: [tripId]);
   }
 
-  /// Unsubscribe when leaving the tracking screen.
   Future<void> stopWatchingTrip(String tripId) async {
     if (_hub == null || tripId.isEmpty) return;
     try {
@@ -49,34 +56,75 @@ class SignalRService {
 
   // ── Event listeners ────────────────────────────────────────────────────────
 
-  /// Fires when the driver sends a new GPS position.
-  /// Positional args: [tripId, latitude, longitude, bearing?, speedKmh?]
+  /// Driver GPS update. Listens for both event names + both payload shapes:
+  ///   - new spec:    object { tripId, latitude, longitude, bearing, speedKmh, timestamp }
+  ///                  on 'DriverLocationUpdated'
+  ///   - legacy/driver-app: positional [tripId, lat, lng, bearing, speedKmh]
+  ///                  on 'ReceiveDriverLocation'
   void onDriverLocationUpdated(
       void Function(String tripId, double lat, double lng, double? bearing,
               double? speedKmh)
           callback) {
-    _hub?.on('ReceiveDriverLocation', (List<Object?>? args) {
-      if (args == null || args.length < 3) return;
-      final tripId = args[0] as String? ?? '';
-      final lat = (args[1] as num).toDouble();
-      final lng = (args[2] as num).toDouble();
-      final bearing = args.length > 3 ? (args[3] as num?)?.toDouble() : null;
-      final speed = args.length > 4 ? (args[4] as num?)?.toDouble() : null;
-      callback(tripId, lat, lng, bearing, speed);
-    });
+    void parse(List<Object?>? args) {
+      if (args == null || args.isEmpty) return;
+      final first = args.first;
+
+      // Object payload (new spec)
+      if (first is Map) {
+        final m = Map<String, dynamic>.from(first);
+        final tripId = m['tripId']?.toString() ?? '';
+        final lat = (m['latitude']  as num?)?.toDouble();
+        final lng = (m['longitude'] as num?)?.toDouble();
+        if (lat == null || lng == null) return;
+        callback(
+          tripId,
+          lat,
+          lng,
+          (m['bearing']  as num?)?.toDouble(),
+          (m['speedKmh'] as num?)?.toDouble(),
+        );
+        return;
+      }
+
+      // Positional args (legacy / driver-app format)
+      if (args.length >= 3) {
+        final tripId = args[0] as String? ?? '';
+        final lat = (args[1] as num?)?.toDouble();
+        final lng = (args[2] as num?)?.toDouble();
+        if (lat == null || lng == null) return;
+        callback(
+          tripId,
+          lat,
+          lng,
+          args.length > 3 ? (args[3] as num?)?.toDouble() : null,
+          args.length > 4 ? (args[4] as num?)?.toDouble() : null,
+        );
+      }
+    }
+
+    _hub?.on('DriverLocationUpdated', parse);  // new spec
+    _hub?.on('ReceiveDriverLocation', parse);  // legacy
   }
 
-  /// Fires when the driver signals the trip has ended.
+  /// Trip ended. Handles both object {tripId, ...} and positional [tripId].
   void onTripEnded(void Function(String tripId) callback) {
-    _hub?.on('TripEnded', (List<Object?>? args) {
+    void parse(List<Object?>? args) {
       if (args == null || args.isEmpty) return;
-      final tripId = args[0] as String? ?? '';
-      callback(tripId);
-    });
+      final first = args.first;
+      if (first is Map) {
+        final m = Map<String, dynamic>.from(first);
+        callback(m['tripId']?.toString() ?? '');
+        return;
+      }
+      callback(first as String? ?? '');
+    }
+
+    _hub?.on('TripEnded', parse);
   }
 
   /// Clear all listeners (call before re-registering to avoid duplicates).
   void clearListeners() {
+    _hub?.off('DriverLocationUpdated');
     _hub?.off('ReceiveDriverLocation');
     _hub?.off('TripEnded');
   }
