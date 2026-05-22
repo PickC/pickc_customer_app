@@ -44,4 +44,5 @@ class StorageKeys {
   static const String etaMinutes    = 'session_eta_minutes';
   static const String driverLat     = 'session_driver_lat';
   static const String driverLng     = 'session_driver_lng';
+  static const String bookingPhase  = 'session_booking_phase'; // BookingPhase.index
 }

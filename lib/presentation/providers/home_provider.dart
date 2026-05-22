@@ -399,8 +399,15 @@ class HomeNotifier extends Notifier<HomeState> {
   }
 
   void _mirrorToLegacyProviders(TripSession? prev, TripSession next) {
-    if (prev?.otp != next.otp) {
-      ref.read(otpProvider.notifier).state = next.otp;
+    // OTP is hidden from the UI until the driver actually arrives at pickup.
+    // The TripSession still captures it from the BookingAccepted payload (so
+    // we don't lose it if the app is killed mid-trip), but it isn't revealed
+    // via otpProvider until phase >= atPickup. Driver keys it in on arrival.
+    final shouldShowOtp = next.phase.index >= BookingPhase.atPickup.index &&
+                          next.phase.index <= BookingPhase.completed.index;
+    final visibleOtp = shouldShowOtp ? next.otp : '';
+    if (ref.read(otpProvider) != visibleOtp) {
+      ref.read(otpProvider.notifier).state = visibleOtp;
     }
     if (prev?.etaMinutes != next.etaMinutes) {
       ref.read(etaMinutesProvider.notifier).state = next.etaMinutes;

@@ -49,6 +49,7 @@ class TripSessionNotifier extends Notifier<TripSession> {
     final ls = ref.read(localStorageProvider);
     await ls.setBookingNo(bookingNo);
     await ls.setIsInTrip(true);
+    await ls.setBookingPhaseIndex(BookingPhase.waiting.index);
     await _connectBookingHub(bookingNo);
   }
 
@@ -71,6 +72,15 @@ class TripSessionNotifier extends Notifier<TripSession> {
     final hasDriver = (ls.getDriverName() ?? '').isNotEmpty
         || (ls.getDriverId() ?? '').isNotEmpty;
 
+    // Exact phase from disk — falls back to a heuristic only if storage
+    // was wiped or pre-dates the bookingPhase key.
+    final savedPhaseIdx = ls.getBookingPhaseIndex();
+    final restoredPhase = (savedPhaseIdx != null &&
+            savedPhaseIdx >= 0 &&
+            savedPhaseIdx < BookingPhase.values.length)
+        ? BookingPhase.values[savedPhaseIdx]
+        : (hasDriver ? BookingPhase.accepted : BookingPhase.waiting);
+
     state = TripSession(
       bookingNo:      bookingNo,
       tripId:         tripId,
@@ -81,9 +91,7 @@ class TripSessionNotifier extends Notifier<TripSession> {
       vehicleNo:      ls.getVehicleNo() ?? '',
       etaMinutes:     ls.getEtaMinutes(),
       driverPosition: (dLat != 0 && dLng != 0) ? LatLng(dLat, dLng) : null,
-      // Best guess from snapshot. API call (in HomeNotifier.restoreActive…)
-      // will refine via the booking-detail endpoint.
-      phase: hasDriver ? BookingPhase.accepted : BookingPhase.waiting,
+      phase:          restoredPhase,
     );
 
     // Reconnect SignalR so future events resume flowing
@@ -177,6 +185,7 @@ class TripSessionNotifier extends Notifier<TripSession> {
       ls.setEtaMinutes(11),
       ls.setDriverLat(driverPos.latitude),
       ls.setDriverLng(driverPos.longitude),
+      ls.setBookingPhaseIndex(BookingPhase.accepted.index),
       if (event.driverId.isNotEmpty) ls.setDriverId(event.driverId),
     ]);
 
@@ -188,12 +197,16 @@ class TripSessionNotifier extends Notifier<TripSession> {
     if (bookingNo != state.bookingNo) return;
     if (state.phase == BookingPhase.atPickup) return;
     state = state.copyWith(phase: BookingPhase.atPickup);
+    unawaited(ref.read(localStorageProvider)
+        .setBookingPhaseIndex(BookingPhase.atPickup.index));
   }
 
   void _onBookingCompleted(String bookingNo) {
     if (bookingNo != state.bookingNo) return;
     if (state.phase == BookingPhase.completed) return;
     state = state.copyWith(phase: BookingPhase.completed);
+    unawaited(ref.read(localStorageProvider)
+        .setBookingPhaseIndex(BookingPhase.completed.index));
     // Hub teardown happens via clear() in resetAfterPayment.
   }
 
@@ -201,6 +214,8 @@ class TripSessionNotifier extends Notifier<TripSession> {
     if (bookingNo != state.bookingNo) return;
     if (state.phase == BookingPhase.cancelled) return;
     state = state.copyWith(phase: BookingPhase.cancelled);
+    unawaited(ref.read(localStorageProvider)
+        .setBookingPhaseIndex(BookingPhase.cancelled.index));
     // Disk gets cleared by clear() once the customer dismisses the alert.
   }
 

@@ -124,6 +124,12 @@ class LocalStorage {
   Future<void> setDriverLng(double v) =>
       _prefs.setString(StorageKeys.driverLng, v.toString());
 
+  /// Persisted BookingPhase index — restored exactly on app reopen so the
+  /// UI knows whether the OTP should be visible (atPickup+) or hidden.
+  int? getBookingPhaseIndex() => _prefs.getInt(StorageKeys.bookingPhase);
+  Future<void> setBookingPhaseIndex(int v) =>
+      _prefs.setInt(StorageKeys.bookingPhase, v);
+
   /// Wipe the per-trip snapshot on cancel / completion / payment so the next
   /// booking can't read stale driver/OTP data.
   Future<void> clearTripSession() async {
@@ -137,6 +143,7 @@ class LocalStorage {
       _prefs.remove(StorageKeys.driverLng),
       _prefs.remove(StorageKeys.tripId),
       _prefs.remove(StorageKeys.driverId),
+      _prefs.remove(StorageKeys.bookingPhase),
     ]);
   }
 
