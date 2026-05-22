@@ -10,6 +10,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../core/constants/api_constants.dart';
 import '../../core/constants/demo_mode.dart';
 import '../../core/services/booking_signalr_service.dart';
+import '../../core/services/signalr_service.dart';
 import '../../data/models/driver/driver_model.dart';
 import 'providers.dart';
 import 'vehicle_provider.dart';
@@ -379,6 +380,9 @@ class HomeNotifier extends Notifier<HomeState> {
   final _bookingSignalR = BookingSignalRService();
   String _watchedBookingNo = ''; // currently subscribed booking, for unsubscribe
 
+  final _tripSignalR = SignalRService();
+  String _watchedTripId = ''; // currently watched trip (real-time GPS via TripHub)
+
   @override
   HomeState build() => HomeState.idle;
 
@@ -593,6 +597,68 @@ class HomeNotifier extends Notifier<HomeState> {
     _watchedBookingNo = '';
   }
 
+  // ── Trip GPS tracking via /hubs/trip ───────────────────────────────────────
+
+  /// Connect to TripHub and stream live driver GPS into currentDriverProvider.
+  /// Idempotent — second call with the same tripId is a no-op.
+  Future<void> _startTripTracking(String tripId) async {
+    if (tripId.isEmpty) return;
+    if (_watchedTripId == tripId && _tripSignalR.isConnected) return;
+
+    _watchedTripId = tripId;
+    try {
+      await _tripSignalR.connect(
+        tokenGetter: () => ref.read(secureStorageProvider).getAuthToken(),
+      );
+      _tripSignalR.clearListeners();
+      _tripSignalR.onDriverLocationUpdated((id, lat, lng, bearing, speedKmh) {
+        if (id != _watchedTripId) return;
+        ref.read(currentDriverProvider.notifier).updatePosition(lat, lng);
+      });
+      _tripSignalR.onTripEnded((id) {
+        if (id != _watchedTripId) return;
+        // _poll() will detect the missing trip and transition to paymentDue.
+        debugPrint('[TripHub] trip $id ended');
+      });
+      await _tripSignalR.watchTrip(tripId);
+      debugPrint('[TripHub] watching $tripId');
+    } catch (e) {
+      debugPrint('[TripHub] connect failed: $e');
+    }
+  }
+
+  Future<void> _stopTripTracking() async {
+    if (_watchedTripId.isNotEmpty) {
+      await _tripSignalR.stopWatchingTrip(_watchedTripId);
+    }
+    _tripSignalR.clearListeners();
+    await _tripSignalR.disconnect();
+    _watchedTripId = '';
+  }
+
+  /// One-shot lookup: ask the API for the active tripId. Used to start live
+  /// GPS tracking once the driver has actually started the trip (tripId only
+  /// becomes available after pickup OTP entry).
+  Future<void> _ensureTripTrackingStarted() async {
+    if (_watchedTripId.isNotEmpty) return;
+    try {
+      final localStorage = ref.read(localStorageProvider);
+      final mobile = localStorage.getMobileNo() ?? '';
+      if (mobile.isEmpty) return;
+      final dio = ref.read(dioClientProvider).dio;
+      final url = ApiConstants.currentCustomerTrip
+          .replaceAll('{customerMobile}', mobile);
+      final response = await dio.get(url);
+      final data = response.data as Map<String, dynamic>? ?? {};
+      final tripId = data['tripID']?.toString() ?? '';
+      if (tripId.isNotEmpty) {
+        await _startTripTracking(tripId);
+      }
+    } catch (e) {
+      debugPrint('[TripHub] tripId lookup failed: $e');
+    }
+  }
+
   Future<void> _onBookingAccepted(BookingAcceptedEvent event) async {
     if (event.bookingNo != _watchedBookingNo) return;
     if (state != HomeState.waitingForDriver) return;
@@ -627,6 +693,8 @@ class HomeNotifier extends Notifier<HomeState> {
     state = HomeState.bookingConfirmed;
     _fetchRoutes(driverPos);
     startPolling();
+    // Driver is on the way → start live GPS as soon as the API has a tripID
+    unawaited(_ensureTripTrackingStarted());
   }
 
   void _onDriverReachedPickup(String bookingNo) {
@@ -639,6 +707,7 @@ class HomeNotifier extends Notifier<HomeState> {
     state = HomeState.paymentDue;
     // Disconnect — booking lifecycle is over (per spec)
     unawaited(_stopBookingSignalR());
+    unawaited(_stopTripTracking());
   }
 
   Future<void> _onBookingCancelledByDriver(String bookingNo, String cancelledBy) async {
@@ -658,6 +727,7 @@ class HomeNotifier extends Notifier<HomeState> {
     // Return to vehicle selection so user can pick a different truck
     state = HomeState.selectingTrucks;
     unawaited(_stopBookingSignalR());
+    unawaited(_stopTripTracking());
   }
 
   /// Demo fallback: simulates 3-second driver assignment.
@@ -773,6 +843,7 @@ class HomeNotifier extends Notifier<HomeState> {
   void resetAfterPayment() {
     _cancelAllTimers();
     unawaited(_stopBookingSignalR());
+    unawaited(_stopTripTracking());
     ref.read(otpProvider.notifier).state = '';
     ref.read(etaMinutesProvider.notifier).state = 0;
     ref.read(driverToPickupRouteProvider.notifier).state = [];
@@ -885,6 +956,10 @@ class HomeNotifier extends Notifier<HomeState> {
         state = HomeState.bookingConfirmed;
         _fetchRoutes(driverPos);
         startPolling();
+        // Resubscribe so DriverReachedPickup / Completed / Cancelled aren't missed
+        await _startBookingSignalR(bookingNo);
+        // Start live GPS (TripHub) — tripId is fetched on demand
+        unawaited(_ensureTripTrackingStarted());
       } else {
         // Still waiting for driver to accept — resubscribe via SignalR
         await _startBookingSignalR(bookingNo);
@@ -904,6 +979,7 @@ class HomeNotifier extends Notifier<HomeState> {
   Future<void> deleteBookingOnExit() async {
     _cancelAllTimers();
     unawaited(_stopBookingSignalR());
+    unawaited(_stopTripTracking());
     final localStorage = ref.read(localStorageProvider);
     final bookingNo    = localStorage.getBookingNo() ?? '';
 
@@ -940,6 +1016,7 @@ class HomeNotifier extends Notifier<HomeState> {
   Future<void> cancelBooking({String reason = ''}) async {
     _cancelAllTimers();
     unawaited(_stopBookingSignalR());
+    unawaited(_stopTripTracking());
 
     final localStorage = ref.read(localStorageProvider);
     final bookingNo = localStorage.getBookingNo() ?? '';
@@ -1067,6 +1144,11 @@ class HomeNotifier extends Notifier<HomeState> {
         return;
       }
 
+      // Driver has now started the trip → connect TripHub for real-time GPS
+      if (tripId.isNotEmpty && _watchedTripId != tripId) {
+        unawaited(_startTripTracking(tripId));
+      }
+
       // Driver-reached-pickup is now delivered via SignalR (DriverReachedPickup),
       // so no need to poll bookingStatus >= 2 here. Trip-end + invoice checks
       // below stay as fallback in case the SignalR BookingCompleted event is missed.
@@ -1099,6 +1181,23 @@ class HomeNotifier extends Notifier<HomeState> {
 class DriverNotifier extends AsyncNotifier<DriverModel?> {
   @override
   Future<DriverModel?> build() async => null;
+
+  /// Update only the GPS position — used by TripHub DriverLocationUpdated
+  /// events to move the marker without a full driver-data reload.
+  void updatePosition(double lat, double lng) {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    state = AsyncData(DriverModel(
+      id: current.id,
+      name: current.name,
+      mobile: current.mobile,
+      vehicleNumber: current.vehicleNumber,
+      vehicleType: current.vehicleType,
+      rating: current.rating,
+      currentLat: lat,
+      currentLng: lng,
+    ));
+  }
 
   Future<void> loadDriver({
     required String bookingNo,
